@@ -1,0 +1,37 @@
+CC=gcc
+CXX=g++
+RM= /bin/rm -vf
+ARCH=UNDEFINED
+PWD=pwd
+CDR=$(shell pwd)
+
+EDCFLAGS:=$(CFLAGS)
+EDLDFLAGS:=$(LDFLAGS)
+EDDEBUG:=$(DEBUG)
+
+CXXFLAGS:= -I include/imgui -I include/implot -I include/ -Wall -O2 -fpermissive -std=gnu++11
+
+BUILDPLOT=src/implot.o \
+src/implot_items.o \
+src/implot_demo.o
+
+GUITARGET=libimplot.a
+
+all: $(GUITARGET)
+
+$(GUITARGET): $(BUILDPLOT)
+	ar -crus $(GUITARGET) $(BUILDPLOT)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -o $@ -c $<
+%.o: %.c
+	$(CC) $(EDCFLAGS) -o $@ -c $<
+	
+.PHONY: clean
+
+clean:
+	$(RM) $(GUITARGET)
+
+spotless: clean
+	$(RM) $(BUILDPLOT)
+
