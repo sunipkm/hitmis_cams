@@ -38,7 +38,23 @@ typedef struct
     uint8_t *data;
     int width;
     int height;
+    bool data_avail;
 } jpg_img;
+
+typedef struct
+{
+    int height;
+    int width;
+    PDIRECT3DTEXTURE9 texture;
+    void Reset()
+    {
+        height = 0;
+        width = 0;
+        if (texture)
+            texture->Release();
+        texture = 0;
+    };
+} d3d9_texture;
 
 #define W(x) W_(x)
 #define W_(x) L##x
@@ -67,6 +83,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
     static int height = cam->GetCCDHeight();
     static int width = cam->GetCCDWidth();
     jpg_img *img = (jpg_img *)_img;
+    img->data_avail = false;
     // printf("Thread: Ptr %p\n", _img);
     while (!done)
     {
@@ -124,6 +141,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             img->size = j_data_sz;
             img->width = width;
             img->height = height;
+            img->data_avail = true;
 
             LeaveCriticalSection(img->lock);
             printf("Image size: %d\n", img->size);
@@ -131,7 +149,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         // Free memory
         free(data);
         free(j_data);
-wait:
+    wait:
         Sleep(1000); // every second
     }
     if (img->size)
@@ -156,6 +174,7 @@ wait:
                                         NULL,                                 \
                                         ptexture)
 
+bool imgwindow_resized = true;
 /**
  * @brief Load texture from file in memory
  * 
@@ -167,7 +186,7 @@ wait:
  * @return true Succes
  * @return false Failure
  */
-bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size, */ PDIRECT3DTEXTURE9 &out_texture, int &out_width, int &out_height)
+bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size, PDIRECT3DTEXTURE9 &out_texture, int &out_width, int &out_height, */ d3d9_texture *t)
 {
     if (jimg == NULL)
         return false;
@@ -179,56 +198,71 @@ bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size
         goto exit;
 
     // scaling
-    if (out_width && (!out_height)) // Height scaling
+    if (t->width && (!t->height)) // Height scaling
     {
-        float scale = 1.0 * out_width / jimg->width;
-        out_height = scale * jimg->height;
-        // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, out_width, out_height, scale);
+        float scale = 1.0 * t->width / jimg->width;
+        t->height = scale * jimg->height;
+        // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, t->width, t->height, scale);
     }
 
-    if (out_height && (!out_width)) // Height scaling
+    if (t->height && (!t->width)) // Height scaling
     {
-        float scale = 1.0 * out_height / jimg->height;
-        out_width = scale * jimg->width;
-        // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, out_width, out_height, scale);
+        float scale = 1.0 * t->height / jimg->height;
+        t->width = scale * jimg->width;
+        // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, t->width, t->height, scale);
+    }
+    // if window has not been resized or data is not available or texture is valid, keep the old texture
+    if ((!imgwindow_resized) && (!jimg->data_avail) && (t->texture))
+    {
+        retval = true;
+        goto exit;
     }
     // TODO: Optimize loading. Load only when new data is available/resize happened
     PDIRECT3DTEXTURE9 texture = NULL; // local texture, will be released when this function is called the next time
 
     // HRESULT hr = D3DXCreateTextureFromFileInMemory(g_pd3dDevice, img, size, &texture); // load image file to texture
-    HRESULT hr = D3DXLoadTextureFromFileMemEx(g_pd3dDevice, img, size, out_width, out_height, &texture); // load image file to texture
+    HRESULT hr = D3DXLoadTextureFromFileMemEx(g_pd3dDevice, img, size, t->width, t->height, &texture); // load image file to texture
     if (hr != S_OK)
-        return false;
+        goto exit;
+    imgwindow_resized = false; // window size has been addressed
+    jimg->data_avail = false;  // data availability has been addressed
 
-    if (out_texture) // if texture was loaded before
+    if (t->texture) // if texture was loaded before
     {
-        out_texture->Release(); // release the texture
-        out_texture = NULL;
+        (t->texture)->Release(); // release the texture
+        t->texture = NULL;
     }
 
-    out_texture = texture; // assign texture to output
+    t->texture = texture; // assign texture to output
 
     D3DSURFACE_DESC img_desc;
-    out_texture->GetLevelDesc(0, &img_desc);
-    out_width = (int)img_desc.Width;
-    out_height = (int)img_desc.Height;
+    (t->texture)->GetLevelDesc(0, &img_desc);
+    t->width = (int)img_desc.Width;
+    t->height = (int)img_desc.Height;
     retval = true;
 
 exit:
     LeaveCriticalSection(jimg->lock);
     return retval;
 }
+
+jpg_img img[1];
+d3d9_texture img_texture[1];
+ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+void MainWindow();
+
 // Main code
 int main(int, char **)
 {
     // PiCam
-    cam = new CCameraUnit_PI();  // try PI
+    cam = new CCameraUnit_PI(); // try PI
     int cam_number = 0;
     bool cam_rdy = cam->CameraReady();
     if (!cam_rdy)
-    {    
+    {
         printf("PI Pixis not detected. Checking if Andor iKon is available.\n");
-        delete cam; // not found
+        delete cam;                       // not found
         cam = new CCameraUnit_ANDORUSB(); // try ANDOR
         cam_number = 1;
     }
@@ -240,7 +274,7 @@ int main(int, char **)
     }
     cam->SetTemperature(-60);
     cam->SetBinningAndROI(1, 1); // binning 1x1, full image
-    cam->SetExposure(0.001);      // 0.01 ms
+    cam->SetExposure(0.001);     // 0.01 ms
     cam->SetReadout(1);
     char cam_name[256];
     size_t cam_name_sz = sprintf(cam_name, "Camera: %s %s", cam_number ? "Andor iKon-M" : "PI Pixis", cam->CameraName()) + 1;
@@ -308,10 +342,8 @@ int main(int, char **)
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/ProggyTiny.ttf", 10.0f);
     //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
     //IM_ASSERT(font != NULL);
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
     // Image object
-    jpg_img img[1];
     CRITICAL_SECTION img_crit;
     img->lock = &img_crit;
     InitializeCriticalSection(img->lock);
@@ -330,6 +362,9 @@ int main(int, char **)
         printf("Could not create thread\n");
         goto end;
     }
+
+    // initialize texture
+    img_texture->Reset();
 
     // Main loop
     while (!done)
@@ -355,39 +390,7 @@ int main(int, char **)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to created a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Hello, world!"); // Create a window called "Hello, world!" and append into it.
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);             // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float *)&clear_color); // Edit 3 floats representing a color
-            
-            ImGui::Text("CCD Temperature: %lf", cam_temperature);
-
-            static int img_width = 0;
-            static int img_height = 0;
-            static PDIRECT3DTEXTURE9 img_texture = NULL;
-
-            // EnterCriticalSection(img->lock); // acquire lock before loading texture
-            // if (img->size)                   // image available
-            // {
-            //     LoadTextureFromMemFile(img->data, img->size, img_texture, img_width, img_height);
-            // }
-            // LeaveCriticalSection(img->lock); // release lock
-            img_width = ImGui::GetWindowSize().x;
-            img_height = 0;
-            bool texture_valid = LoadTextureFromMemFile(img, img_texture, img_width, img_height);
-            ImGui::Text("Image: %d x %d pixels", img_width, img_height);
-            if (texture_valid) // image can be shown
-            {
-                ImGui::Image((void *)img_texture, ImVec2(img_width, img_height)); // show image
-            }
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-            ImGui::End();
-        }
+        MainWindow();
 
         // Rendering
         ImGui::EndFrame();
@@ -430,10 +433,48 @@ end:
     ::DestroyWindow(hwnd);
     ::UnregisterClass(wc.lpszClassName, wc.hInstance);
 
-    delete [] wcam_name;
+    delete[] wcam_name;
 end2:
     printf("Exiting\n");
     return 0;
+}
+
+void MainWindow()
+{
+    static float f = 0.0f;
+    static int counter = 0;
+
+    ImGui::Begin("Hello, world!"); // Create a window called "Hello, world!" and append into it.
+
+    ImGui::SliderFloat("float", &f, 0.0f, 1.0f);             // Edit 1 float using a slider from 0.0f to 1.0f
+    ImGui::ColorEdit3("clear color", (float *)&clear_color); // Edit 3 floats representing a color
+
+    ImGui::Text("CCD Temperature: %lf", cam_temperature);
+
+    // EnterCriticalSection(img->lock); // acquire lock before loading texture
+    // if (img->size)                   // image available
+    // {
+    //     LoadTextureFromMemFile(img->data, img->size, img_texture, img_width, img_height);
+    // }
+    // LeaveCriticalSection(img->lock); // release lock
+    static int old_win_width = 0;
+    int win_width = ImGui::GetWindowSize().x;
+    if (win_width != old_win_width)
+        imgwindow_resized = true;
+    old_win_width = win_width; // update old width
+    img_texture->width = win_width - 5;
+    img_texture->height = 0;
+    bool texture_valid = LoadTextureFromMemFile(img, img_texture);
+    ImGui::Text("Image: %d x %d pixels", img_texture->width, img_texture->height);
+    PDIRECT3DTEXTURE9 texture = img_texture->texture;
+    int width = img_texture->width;
+    int height = img_texture->height;
+    if (texture_valid && texture) // image can be shown
+    {
+        ImGui::Image((void *)texture, ImVec2(width, height)); // show image
+    }
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    ImGui::End();
 }
 
 // Helper functions
@@ -472,8 +513,14 @@ void CleanupDeviceD3D()
     }
 }
 
+d3d9_texture *active_textures[] = {img_texture};
+
 void ResetDevice()
 {
+    for (int i = 0; i < (sizeof(active_textures) / sizeof(d3d9_texture *)); i++)
+    {
+        active_textures[i]->Reset();
+    }
     ImGui_ImplDX9_InvalidateDeviceObjects();
     HRESULT hr = g_pd3dDevice->Reset(&g_d3dpp);
     if (hr == D3DERR_INVALIDCALL)
