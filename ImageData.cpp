@@ -12,23 +12,28 @@ static char THIS_FILE[] = __FILE__;
 
 void CImageData::ClearImage()
 {
-   delete[] m_imageData;
+   // printf("ClearImage: %p, %d, %d\n", m_imageData, m_imageWidth, m_imageHeight);
+   if (m_imageData != 0)
+      delete[] m_imageData;
    m_imageData = 0;
 
    m_imageWidth = 0;
    m_imageHeight = 0;
+   // printf("ClearImage: %p, %d, %d\n", m_imageData, m_imageWidth, m_imageHeight);
 }
 
 CImageData::CImageData()
 : m_imageData(NULL)
 {
+   // printf("Default constructor\n");
    ClearImage();
 }
 
 
 CImageData::CImageData(int imageWidth, int imageHeight, unsigned short* imageData)
-: m_imageData(NULL)
+: m_imageData(0)
 {
+   // printf("Malloc constructor\n");
    ClearImage();
 
    if ((imageWidth <= 0) || (imageHeight <= 0))
@@ -37,6 +42,7 @@ CImageData::CImageData(int imageWidth, int imageHeight, unsigned short* imageDat
    }
 
    m_imageData = new unsigned short[imageWidth * imageHeight];
+   // printf("Allocated: %p\n", m_imageData);
    if (m_imageData == NULL)
    {
       return;
@@ -58,6 +64,7 @@ CImageData::CImageData(int imageWidth, int imageHeight, unsigned short* imageDat
 CImageData::CImageData(const CImageData& rhs)
 : m_imageData(NULL)
 {
+   // printf("RHS called\n");
    ClearImage();
    
    if (  (rhs.m_imageWidth == 0)
@@ -83,6 +90,7 @@ CImageData::CImageData(const CImageData& rhs)
 
 CImageData& CImageData::operator=(const CImageData& rhs)
 {
+   // printf("Assignment called\n");
    if (&rhs == this)
    { // self asignment
       return *this;

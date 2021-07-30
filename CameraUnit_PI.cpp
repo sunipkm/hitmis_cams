@@ -1,7 +1,7 @@
 // CameraUnit.cpp : implementation file
 //
 #include "CameraUnit_PI.h"
-#include "picam.h"
+#include "pvcam.h"
 
 
 #ifdef _DEBUG
@@ -33,57 +33,37 @@ CCameraUnit_PI::CCameraUnit_PI()
 
 	// initialize camera
 
-   int err;
-	if ((err = Picam_InitializeLibrary()))
-   {
-      printf("Error initializing picam library %d\n", err);
-      return;
-   }
-   const PicamCameraID *cams;
-   piint count;
-   Picam_GetAvailableCameraIDs(&cams, &count);
-   if (count > 0)
-   {
-      printf("picam %d cameras found\n", count);
-   }
-   else
-   {
-      printf("Cameras not found\n");
-      return;
-   }
+	pl_pvcam_init();
 
+	// get number of cameras and names
 
+    pl_cam_get_total(&numcameras);
+	for (int i = 0; i<numcameras; i++) {
+		pl_cam_get_name(i,cam_name);
+	}
+   // printf("Cameras found: %d\n", numcameras);
 	// Open the camera
-   // PicamHandle *cam;
-   err = Picam_OpenFirstCamera(&hCam);
-	if ((err))
-   {
-      printf("error opening camera %d\n", err);
-      Picam_UninitializeLibrary();
-      return;
-   }
-   // hCam = *cam;
-   printf("opened camera successfully\n");
+	pl_cam_open(cam_name, &hCam, OPEN_EXCLUSIVE);
+   // printf("Camera opened\n");
 
 	// readout speed moved to its function below
 
 	// gain settings
-	piint maxgain;
-   Picam_GetParameterIntegerDefaultValue(hCam, PicamParameter_EMIccdGain, &maxgain);
-   Picam_SetParameterIntegerValue(hCam, PicamParameter_EMIccdGain, maxgain);
-	Picam_SetParameterIntegerValue(hCam, PicamParameter_EMIccdGainControlMode, PicamEMIccdGainControlMode_Optimal); // optimal gain
+	int16 maxgain;
+	pl_get_param(hCam, PARAM_GAIN_INDEX, ATTR_MAX, (void *)&maxgain);
+	pl_set_param(hCam, PARAM_GAIN_INDEX, (void *)&maxgain);
+   // printf("Max gain: %d\n", maxgain);
+	// get chip size
 
-	// // get chip size
+	unsigned short xdimension = 0;
+	unsigned short ydimension = 0;
 
-	piint xdimension = 0;
-	piint ydimension = 0;
-
-	Picam_GetParameterIntegerValue(hCam, PicamParameter_SensorActiveHeight, &ydimension);
-	Picam_GetParameterIntegerValue(hCam, PicamParameter_SensorActiveWidth, &xdimension);
+	pl_ccd_get_par_size(hCam, &ydimension);
+	pl_ccd_get_ser_size(hCam, &xdimension);
 
 	CCDHeight_ = int(ydimension);
 	CCDWidth_ = int(xdimension);
-   printf("Chip size: %d x %d\n", CCDWidth_, CCDHeight_);
+   // printf("CCD: %d x %d pixels\n", CCDHeight_, CCDWidth_);
 
 	// --------------------------------------
 
@@ -95,9 +75,9 @@ CCameraUnit_PI::~CCameraUnit_PI()
 {
    CriticalSection::Lock lock(criticalSection_);
    
-   Picam_CloseCamera(hCam);
+    pl_cam_close(hCam);
 
-	Picam_UninitializeLibrary();
+	pl_pvcam_uninit();
 }
 
 
@@ -107,7 +87,7 @@ void CCameraUnit_PI::CancelCapture()
    cancelCapture_ = true;
 
    // abort acquisition, close shutter, halt CCS, and put camera in idle
-   Picam_StopAcquisition(hCam);
+   pl_exp_abort(hCam,CCS_HALT_CLOSE_SHTR);
 }
 
 
@@ -115,61 +95,73 @@ void CCameraUnit_PI::CancelCapture()
 
 CImageData CCameraUnit_PI::CaptureImage(long int& retryCount)
 {
+   // printf("Starting capture image\n");
    CriticalSection::Lock lock(criticalSection_);
    CImageData retVal;
    cancelCapture_ = false;
 
-// 	uns32 datasize;
-// 	uns16* pImgBuf;
-// 	int16 status;
-// 	uns32 not_needed;
+	uns32 datasize;
+	uns16* pImgBuf;
+	int16 status;
+	uns32 not_needed;
 
-//    if (!m_initializationOK)
-//    {
-//       goto exit_;
-//    }
+   if (!m_initializationOK)
+   {
+      goto exit_err;
+   }
 
-//    {
-// 	    rgn_type region = { imageLeft_, imageRight_, binningX_, imageBottom_, imageTop_, binningY_ }; 
+   {
+	    rgn_type region = { imageLeft_, imageRight_, binningX_, imageBottom_, imageTop_, binningY_ }; 
 
-// 		// add acquisition code here
+		// add acquisition code here
+      // printf("Setting up exposure: %d, %d | %d %d | %d %d | %u ms\n", binningX_, binningY_, imageLeft_, imageRight_, imageBottom_, imageTop_, uns32(exposure_ * 1000));
+      
+		pl_exp_init_seq();
+		pl_exp_setup_seq(hCam, 1, 1, &region, TIMED_MODE, uns32(exposure_ * 1000), &datasize);
 
-// 		pl_exp_init_seq();
-// 		pl_exp_setup_seq(hCam, 1, 1, &region, TIMED_MODE, uns32(exposure_ * 1000), &datasize);
-	
-// 		// allocate memory
+      // // printf("Set up exposure, data size %u\n", datasize);
+      if (!datasize)
+         goto exit_err;
+		// allocate memory
 
-// 		pImgBuf = (uns16*)malloc(datasize);
+		pImgBuf = (uns16*)malloc(datasize);
 
-// 		// take an image
-
-
-// 		pl_exp_start_seq(hCam, pImgBuf);
-
-
-// 		pl_exp_check_status(hCam,&status,&not_needed);
-
-// 		while ( status != READOUT_COMPLETE ) {
-// 			Sleep(500);
-// 			pl_exp_check_status(hCam,&status,&not_needed);
-// 		}
+		// take an image
 
 
-// 		pl_exp_finish_seq(hCam, pImgBuf, NULL);
-// 		pl_exp_uninit_seq();
+		pl_exp_start_seq(hCam, pImgBuf);
+      // // printf("Started exposure\n");
 
-//       int imageWidth = imageRight_ - imageLeft_;
-//       int imageHeight = imageTop_ - imageBottom_;
 
-// 		retVal = CImageData(imageWidth, imageHeight);
+		pl_exp_check_status(hCam,&status,&not_needed);
+      int counter = 0;
+      // // printf("Status %d: %d\n", counter++, status);
+		while ( status != READOUT_COMPLETE ) {
+			Sleep(500);
+			pl_exp_check_status(hCam,&status,&not_needed);
+         // // printf("Status %d: %d\n", counter++, status);
+         if (status == READOUT_FAILED)
+            goto exit_;
+		}
 
-// 		memcpy(retVal.GetImageData(), pImgBuf, datasize);
-// 	}
 
-   
-// exit_:
-//    SetStatus("");
-//    free(pImgBuf);			// without this line of code, memory usage grows continuously!
+		pl_exp_finish_seq(hCam, pImgBuf, NULL);
+		pl_exp_uninit_seq();
+      // // printf("Finished exposure\n");
+
+      int imageWidth = imageRight_ - imageLeft_ + 1;
+      int imageHeight = imageTop_ - imageBottom_ + 1;
+
+		retVal = CImageData(imageWidth, imageHeight);
+      // printf("Got CImageData: ");
+      // printf("%p %d %d\n", retVal.GetImageData(), retVal.GetImageWidth(), retVal.GetImageHeight());
+		memcpy(retVal.GetImageData(), pImgBuf, datasize);
+      free(pImgBuf);			// without this line of code, memory usage grows continuously!
+      // printf("Finished memcpy\n");
+	}  
+exit_:
+exit_err:
+   // printf("Exiting capture\n");
    return retVal;
 }
 
@@ -181,10 +173,10 @@ void CCameraUnit_PI::SetTemperature(double temperatureInCelcius)
       return;
    }
 
-   piint settemp;
+   int16 settemp;
    settemp = temperatureInCelcius * 100;
   
-   // pl_set_param(hCam, PARAM_TEMP_SETPOINT, (void *)&settemp);
+   pl_set_param(hCam, PARAM_TEMP_SETPOINT, (void *)&settemp);
 
 
 }
@@ -198,8 +190,8 @@ double CCameraUnit_PI::GetTemperature() const
       return INVALID_TEMPERATURE;
    }
 
-   piint temperature = 0;
-	// pl_get_param(hCam, PARAM_TEMP, ATTR_CURRENT, (void *)&temperature);
+   int16 temperature = 0;
+	pl_get_param(hCam, PARAM_TEMP, ATTR_CURRENT, (void *)&temperature);
 
    double retVal;
 
@@ -236,20 +228,20 @@ void CCameraUnit_PI::SetBinningAndROI(int binX, int binY, int x_min, int x_max, 
    imageBottom_ = y_min;
    imageTop_ = y_max;
 
-   if (imageRight_ > GetCCDWidth())
-      imageRight_ = GetCCDWidth();
+   if (imageRight_ > GetCCDWidth() - 1)
+      imageRight_ = GetCCDWidth() - 1;
    if (imageLeft_ < 0)
       imageLeft_ = 0;
    if (imageRight_ <= imageLeft_)
-      imageRight_ = GetCCDWidth();
+      imageRight_ = GetCCDWidth() - 1;
 
-   if (imageTop_ > GetCCDHeight())
-      imageTop_ = GetCCDHeight();
+   if (imageTop_ > GetCCDHeight() - 1)
+      imageTop_ = GetCCDHeight() - 1;
    if (imageBottom_ < 0)
       imageBottom_ = 0;
    if (imageTop_ <= imageBottom_)
-      imageTop_ = GetCCDHeight();
-
+      imageTop_ = GetCCDHeight() - 1;
+   // printf("%d %d, %d %d | %d %d\n", binningX_, binningY_, imageLeft_, imageRight_, imageBottom_, imageTop_);
 }
 
 
@@ -303,17 +295,17 @@ void CCameraUnit_PI::SetReadout(int ReadSpeed)
 	// I am reading in a parameter from the PRF file which gives readspeed_, which for
 	// PI should be either 0 (low) or 1 (high)
 
-	// int16 minspeed = 0;
-	// int16 numspeeds;
-	// int16 maxspeed;
-	// pl_get_param(hCam, PARAM_SPDTAB_INDEX, ATTR_COUNT, (void *)&numspeeds);
-	// pl_get_param(hCam, PARAM_SPDTAB_INDEX, ATTR_MAX, (void *)&maxspeed);
+	int16 minspeed = 0;
+	int16 numspeeds;
+	int16 maxspeed;
+	pl_get_param(hCam, PARAM_SPDTAB_INDEX, ATTR_COUNT, (void *)&numspeeds);
+	pl_get_param(hCam, PARAM_SPDTAB_INDEX, ATTR_MAX, (void *)&maxspeed);
 
-	// if (ReadSpeed == 0) { 
-	// 	pl_set_param(hCam, PARAM_SPDTAB_INDEX, (void *)&minspeed);
-	// } else {
-	// 	pl_set_param(hCam, PARAM_SPDTAB_INDEX, (void *)&maxspeed);
-	// }
+	if (ReadSpeed == 0) { 
+		pl_set_param(hCam, PARAM_SPDTAB_INDEX, (void *)&minspeed);
+	} else {
+		pl_set_param(hCam, PARAM_SPDTAB_INDEX, (void *)&maxspeed);
+	}
 
 }
 

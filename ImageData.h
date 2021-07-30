@@ -28,8 +28,12 @@ class CImageData
 
    int m_imageWidth;
    int m_imageHeight;
-   unsigned short* m_imageData;
 
+   unsigned short* m_imageData;
+public:
+   float exposure;
+   int bin_x, bin_y;
+   
 
 public:
    CImageData();

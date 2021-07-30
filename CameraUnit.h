@@ -24,6 +24,8 @@ public:
    virtual void CancelCapture() =0;
 
    // Accessors
+   virtual bool   CameraReady() const =0;
+
    virtual void   SetExposure(float exposureInMs) =0;
    virtual float  GetExposure() const =0;
 

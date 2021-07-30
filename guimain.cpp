@@ -57,21 +57,47 @@ typedef struct
     }
 
 CCameraUnit *cam;
+double cam_temperature = 0;
 
 DWORD WINAPI ImageGenFunction(LPVOID _img)
 {
     static int height = cam->GetCCDHeight();
     static int width = cam->GetCCDWidth();
     jpg_img *img = (jpg_img *)_img;
-    printf("Thread: Ptr %p\n", _img);
+    // printf("Thread: Ptr %p\n", _img);
     while (!done)
     {
         long retryCount = 1;
+        // cam->SetExposure(0.1); // 20 ms
+        cam_temperature = cam->GetTemperature();
+        cam->SetReadout(1);
         CImageData imgdata = cam->CaptureImage(retryCount);
-        int img_sz = imgdata.GetImageHeight() * imgdata.GetImageWidth();
-        uint8_t *data = (uint8_t *)malloc(img_sz);
+        // printf("Capture complete\n");
+        if (!imgdata.HasData())
+            goto wait;
+        height = imgdata.GetImageHeight();
+        width = imgdata.GetImageWidth();
+        int img_sz = height * width;
+        uint16_t *imgptr = imgdata.GetImageData();
+        uint8_t *data = (uint8_t *)malloc(img_sz * 3); // 3 channels
+        printf("Capture size: %d x %d = %d, imgptr: %p, dataptr: %p\n", width, height, img_sz, imgptr, data);
         for (int i = 0; i < img_sz; i++)
-            data[i] = (imgdata.GetImageData())[i] / 0x100;
+        {
+            int idx = 3 * i;
+            uint8_t tmp = imgptr[i] / 0x100;
+            data[idx] = tmp;
+            if (imgptr[i] == 0xffff) // saturated
+            {
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            }
+            else
+            {
+                data[idx + 1] = tmp;
+                data[idx + 2] = tmp;
+            }
+        }
+        // printf("Image conversion complete\n");
         // JPEG output buffer, has to be larger than expected JPEG size
         uint8_t *j_data = (uint8_t *)malloc(height * width * 4 + 1024);
         int j_data_sz = (height * width * 4 + 1024);
@@ -80,7 +106,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         params.m_quality = 100;
         params.m_subsampling = static_cast<jpge::subsampling_t>(0); // grey
         // JPEG compression and image update
-        if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 3, data, params))
+        if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 1, data, params))
         {
             printf("Failed to compress image to jpeg in memory\n");
         }
@@ -100,7 +126,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         // Free memory
         free(data);
         free(j_data);
-        // Wait
+wait:
         Sleep(1000); // every second
     }
     if (img->size)
@@ -227,9 +253,13 @@ int main(int, char **)
 
     // PiCam
     cam = new CCameraUnit_PI();  // open camera
+    if (!cam->CameraReady())
+        goto end2;
+    cam->SetTemperature(-60);
     cam->SetBinningAndROI(1, 1); // binning 1x1, full image
-    cam->SetExposure(0.01);      // 0.01 ms
-    goto end2;
+    cam->SetExposure(0.001);      // 0.01 ms
+    // cam->SetReadout(1);
+    // goto end2;
 
     // Image object
     jpg_img img[1];
@@ -283,11 +313,8 @@ int main(int, char **)
 
             ImGui::SliderFloat("float", &f, 0.0f, 1.0f);             // Edit 1 float using a slider from 0.0f to 1.0f
             ImGui::ColorEdit3("clear color", (float *)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button")) // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
+            
+            ImGui::Text("CCD Temperature: %lf", cam_temperature);
 
             static int img_width = 0;
             static int img_height = 0;

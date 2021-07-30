@@ -5,14 +5,14 @@
 #include "CameraUnit.h"
 
 #include "CriticalSection.h"
-#include "picam.h"
+#include "pvcam.h"
 
 /////////////////////////////////////////////////////////////////////////////
 // CCameraUnit object
 
 class CCameraUnit_PI: public CCameraUnit
 {
-   PicamHandle hCam;
+   short hCam;
 
    bool m_initializationOK;
    CriticalSection criticalSection_;
@@ -21,7 +21,10 @@ class CCameraUnit_PI: public CCameraUnit
    CriticalSection statusCriticalSection_;
 
    float exposure_;
+   bool exposure_updated_;
+
    bool requestShutterOpen_;
+   bool shutter_updated_;
 
    int binningX_;
    int binningY_;
@@ -30,9 +33,12 @@ class CCameraUnit_PI: public CCameraUnit
    int imageRight_;
    int imageTop_;
    int imageBottom_;
+   bool roi_updated_;
 
    int CCDWidth_;
    int CCDHeight_;
+   int CCDgain_;
+   bool gain_updated_;
 
    mutable volatile unsigned int lastError_;
 
@@ -48,6 +54,8 @@ public:
    void CancelCapture();
 
    // Accessors
+   bool   CameraReady() const { return m_initializationOK;}
+
    void   SetExposure(float exposureInSeconds);
    float  GetExposure() const { return exposure_;}
 
