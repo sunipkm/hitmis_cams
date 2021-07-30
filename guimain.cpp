@@ -1,7 +1,7 @@
 // Dear ImGui: standalone example application for DirectX 9
 // If you are new to Dear ImGui, read documentation from the docs/ folder + read the top of imgui.cpp.
 // Read online: https://github.com/ocornut/imgui/tree/master/docs
-
+#define ANDOR
 #include "imgui/imgui.h"
 #include "backend/imgui_impl_dx9.h"
 #include "backend/imgui_impl_win32.h"
@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "CameraUnit_PI.h"
+#include "CameraUnit_ANDORUSB.h"
 #include "jpge.h"
 
 #include <D3dx9tex.h>
@@ -58,7 +59,7 @@ typedef struct
         WriteConsole(GetStdHandle(STD_OUTPUT_HANDLE), msg, (DWORD)msg_len, &out_len, NULL); \
     }
 
-CCameraUnit *cam;
+CCameraUnit *cam = NULL;
 double cam_temperature = 0;
 
 DWORD WINAPI ImageGenFunction(LPVOID _img)
@@ -191,7 +192,7 @@ bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size
         out_width = scale * jimg->width;
         // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, out_width, out_height, scale);
     }
-
+    // TODO: Optimize loading. Load only when new data is available/resize happened
     PDIRECT3DTEXTURE9 texture = NULL; // local texture, will be released when this function is called the next time
 
     // HRESULT hr = D3DXCreateTextureFromFileInMemory(g_pd3dDevice, img, size, &texture); // load image file to texture
@@ -220,11 +221,38 @@ exit:
 // Main code
 int main(int, char **)
 {
+    // PiCam
+    cam = new CCameraUnit_PI();  // try PI
+    int cam_number = 0;
+    bool cam_rdy = cam->CameraReady();
+    if (!cam_rdy)
+    {    
+        printf("PI Pixis not detected. Checking if Andor iKon is available.\n");
+        delete cam; // not found
+        cam = new CCameraUnit_ANDORUSB(); // try ANDOR
+        cam_number = 1;
+    }
+    if (!cam->CameraReady())
+    {
+        delete cam; // not found
+        printf("PI Pixis or Andor iKon-M cameras not detected. Check if cameras are connected, turned on, and appropriate drivers are installed.\n");
+        goto end2;
+    }
+    cam->SetTemperature(-60);
+    cam->SetBinningAndROI(1, 1); // binning 1x1, full image
+    cam->SetExposure(0.001);      // 0.01 ms
+    cam->SetReadout(1);
+    char cam_name[256];
+    size_t cam_name_sz = sprintf(cam_name, "Camera: %s %s", cam_number ? "Andor iKon-M" : "PI Pixis", cam->CameraName()) + 1;
+    printf("%s\n", cam_name);
+    wchar_t *wcam_name = new wchar_t[cam_name_sz];
+    mbstowcs(wcam_name, cam_name, cam_name_sz);
+    // goto end2;
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
-    WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("ImGui Example"), NULL};
+    WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), NULL};
     ::RegisterClassEx(&wc);
-    HWND hwnd = ::CreateWindow(wc.lpszClassName, _T("Dear ImGui DirectX9 Image Example"), WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+    HWND hwnd = ::CreateWindow(wc.lpszClassName, wcam_name, WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -281,16 +309,6 @@ int main(int, char **)
     //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
     //IM_ASSERT(font != NULL);
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-
-    // PiCam
-    cam = new CCameraUnit_PI();  // open camera
-    if (!cam->CameraReady())
-        goto end2;
-    cam->SetTemperature(-60);
-    cam->SetBinningAndROI(1, 1); // binning 1x1, full image
-    cam->SetExposure(0.001);      // 0.01 ms
-    cam->SetReadout(1);
-    // goto end2;
 
     // Image object
     jpg_img img[1];
@@ -361,9 +379,9 @@ int main(int, char **)
             // LeaveCriticalSection(img->lock); // release lock
             img_width = ImGui::GetWindowSize().x;
             img_height = 0;
-            LoadTextureFromMemFile(img, img_texture, img_width, img_height);
+            bool texture_valid = LoadTextureFromMemFile(img, img_texture, img_width, img_height);
             ImGui::Text("Image: %d x %d pixels", img_width, img_height);
-            if (img_height > 0) // image can be shown
+            if (texture_valid) // image can be shown
             {
                 ImGui::Image((void *)img_texture, ImVec2(img_width, img_height)); // show image
             }
@@ -403,8 +421,7 @@ int main(int, char **)
     CloseHandle(hThread);
 end:
     DeleteCriticalSection(img->lock);
-end2:
-    printf("Exiting\n");
+
     ImGui_ImplDX9_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
@@ -413,6 +430,9 @@ end2:
     ::DestroyWindow(hwnd);
     ::UnregisterClass(wc.lpszClassName, wc.hInstance);
 
+    delete [] wcam_name;
+end2:
+    printf("Exiting\n");
     return 0;
 }
 

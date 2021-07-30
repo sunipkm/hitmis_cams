@@ -9,19 +9,19 @@
 static char THIS_FILE[] = __FILE__;
 #endif
 
-bool CCameraUnit_ANDORUSB::HasError(unsigned int error) const
+bool CCameraUnit_ANDORUSB::HasError(unsigned int error, unsigned int line) const
 {
     switch (error)
     {
     default:
-        printf("ANDOR Error\n");
+        printf("%s, %d: ANDOR Error\n", __FILE__, line);
         return true;
 
-#define ANDOR_ERROR(x)                  \
-    case x:                             \
-        if (error != lastError_)        \
-            printf("ANDOR error: " #x); \
-        lastError_ = error;             \
+#define ANDOR_ERROR(x)                                          \
+    case x:                                                     \
+        if (error != lastError_)                                \
+            printf("%s, %d: ANDOR error: " #x "\n", __FILE__, line); \
+        lastError_ = error;                                     \
         return true;
 #define NOT_ANDOR_ERROR(x) \
     case x:                \
@@ -104,27 +104,29 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
                                                // for driver files
 
     // Initialize driver in current directory
-    if (HasError(Initialize(aBuffer)))
+    if (HasError(Initialize(aBuffer), __LINE__))
     {
         return;
     }
 
-    if (HasError(SetAcquisitionMode(1)))
+    HasError(GetHeadModel(_camera_name), __LINE__);
+
+    if (HasError(SetAcquisitionMode(1), __LINE__))
     {
         return;
     }
 
-    if (HasError(SetReadMode(4)))
+    if (HasError(SetReadMode(4), __LINE__))
     {
         return;
     }
 
-    if (HasError(GetDetector(&CCDWidth_, &CCDHeight_)))
+    if (HasError(GetDetector(&CCDWidth_, &CCDHeight_), __LINE__))
     {
         return;
     }
 
-    if (HasError(CoolerON()))
+    if (HasError(CoolerON(), __LINE__))
     {
         return;
     }
@@ -133,7 +135,7 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
 
     // CODE ADDED BY BOB FOR INITIALIZATION ---------------
 
-    if (HasError(SetTriggerMode(0)))
+    if (HasError(SetTriggerMode(0), __LINE__))
     {
         return;
     }
@@ -146,7 +148,7 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
     int ADnumber;
     int nHSspeeds;
 
-    if (HasError(GetNumberVSSpeeds(&index)))
+    if (HasError(GetNumberVSSpeeds(&index), __LINE__))
     {
         return;
     }
@@ -159,7 +161,7 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
             VSnumber = iSpeed;
         }
     }
-    if (HasError(SetVSSpeed(VSnumber)))
+    if (HasError(SetVSSpeed(VSnumber), __LINE__))
     {
         return;
     }
@@ -169,7 +171,7 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
     STemp = 0;
     HSnumber = 0;
     ADnumber = 0;
-    if (HasError(GetNumberADChannels(&nAD)))
+    if (HasError(GetNumberADChannels(&nAD), __LINE__))
     {
         return;
     }
@@ -177,7 +179,7 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
     {
 
         ADnumber = 0;
-        if (HasError(SetADChannel(ADnumber)))
+        if (HasError(SetADChannel(ADnumber), __LINE__))
         {
             return;
         }
@@ -185,11 +187,11 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
         // April 2011: for ANDOR, changed to use the middle (1 MHz) readout speed. Index 0 is the fastest!
         // I will set it to the 2nd slowest speed. If nHSspeeds is 5, we want index 3.
 
-        if (HasError(GetNumberHSSpeeds(ADnumber, 0, &nHSspeeds)))
+        if (HasError(GetNumberHSSpeeds(ADnumber, 0, &nHSspeeds), __LINE__))
         {
             return;
         }
-        if (HasError(SetHSSpeed(0, nHSspeeds - 2)))
+        if (HasError(SetHSSpeed(0, nHSspeeds - 2), __LINE__))
         {
             return;
         }
@@ -199,13 +201,13 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
 
     STemp = 0;
     int AmpNumber = 0;
-    if (HasError(GetNumberPreAmpGains(&index)))
+    if (HasError(GetNumberPreAmpGains(&index), __LINE__))
     {
         return;
     }
     for (iSpeed = 0; iSpeed < index; iSpeed++)
     {
-        if (HasError(GetPreAmpGain(iSpeed, &speed)))
+        if (HasError(GetPreAmpGain(iSpeed, &speed), __LINE__))
         {
             return;
         }
@@ -215,7 +217,7 @@ CCameraUnit_ANDORUSB::CCameraUnit_ANDORUSB(int shutterDelayInMs, unsigned int re
             AmpNumber = iSpeed;
         }
     }
-    if (HasError(SetPreAmpGain(AmpNumber)))
+    if (HasError(SetPreAmpGain(AmpNumber), __LINE__))
     {
         return;
     }
@@ -253,6 +255,7 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
     CriticalSection::Lock lock(criticalSection_);
     CImageData retVal;
     cancelCapture_ = false;
+    static bool firstCapture = true;
 
     if (!m_initializationOK)
     {
@@ -263,7 +266,11 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
     // It only seems to happen in release code.
     // On my system I could not go much below 500 ms.
     // No idea why -- Jaap (5/26/2004)
-    Sleep(200);
+    if (firstCapture)
+    {
+        Sleep(200);
+        firstCapture = false;
+    }
 
     { // wait for idle before starting acquisistion
 
@@ -281,7 +288,7 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
             }
 
             int status = DRV_IDLE;
-            if (HasError(::GetStatus(&status)))
+            if (HasError(::GetStatus(&status), __LINE__))
             {
                 goto exit_;
             }
@@ -304,7 +311,7 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
 
     SetShutter();
 
-    if (HasError(StartAcquisition()))
+    if (HasError(StartAcquisition(), __LINE__))
     {
         goto exit_;
     }
@@ -315,7 +322,8 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
     }
 
     { // allocate the buffer
-
+        printf("Size = %d x %d\n", width_, height_);
+        printf("CCD Size = %d x %d\n", CCDWidth_, CCDHeight_);
         CImageData buffer(width_, height_);
 
         bool done = false;
@@ -335,7 +343,7 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
             switch (status)
             {
             default:
-                HasError(status);
+                HasError(status, __LINE__);
                 goto exit_; // unknown status is treated as error
 
             case DRV_SUCCESS:
@@ -355,7 +363,6 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
     }
 
 exit_:
-    SetStatus("");
     return retVal;
 }
 
@@ -368,7 +375,7 @@ void CCameraUnit_ANDORUSB::SetTemperature(double temperatureInCelcius)
 
     int minTemp, maxTemp;
 
-    if (HasError(GetTemperatureRange(&minTemp, &maxTemp)))
+    if (HasError(GetTemperatureRange(&minTemp, &maxTemp), __LINE__))
     {
         return;
     }
@@ -382,7 +389,7 @@ void CCameraUnit_ANDORUSB::SetTemperature(double temperatureInCelcius)
         temperatureInCelcius = maxTemp;
     }
 
-    if (HasError(::SetTemperature(temperatureInCelcius)))
+    if (HasError(::SetTemperature(temperatureInCelcius), __LINE__))
     {
         return;
     }
@@ -401,7 +408,7 @@ double CCameraUnit_ANDORUSB::GetTemperature() const
     switch (retVal)
     {
     default:
-        HasError(retVal);
+        HasError(retVal, __LINE__);
         return INVALID_TEMPERATURE;
 
     case DRV_ACQUIRING:
@@ -427,6 +434,7 @@ void CCameraUnit_ANDORUSB::SetBinningAndROI(int binX, int binY, int x_min, int x
     {
         return;
     }
+    lock.Unlock();
 
     if (binX < 1)
         binX = 1;
@@ -443,16 +451,43 @@ void CCameraUnit_ANDORUSB::SetBinningAndROI(int binX, int binY, int x_min, int x
     binningX_ = binX;
     binningY_ = binY;
 
-    width_ = x_max;
-    if (width_ > CCDWidth_)
-        width_ = CCDWidth_;
-    else if (width_ <= 0)
-        width_ = CCDWidth_;
-    height_ = y_max;
-    if (height_ > CCDHeight_)
-        height_ = CCDHeight_;
-    else if (height_ <= 0)
-        height_ = CCDHeight_;
+    if (x_min < 0)
+        x_min = 0;
+    if ((x_max <= x_min) || (x_max > CCDWidth_))
+        x_max = CCDWidth_;
+
+    if (y_min <= 0)
+        y_min = 0;
+    if ((y_max <= y_min) || (y_max > CCDHeight_))
+        y_max = CCDHeight_;
+
+    lock.Relock();
+    width_ = x_max - x_min;
+    height_ = y_max - y_min;
+
+    unsigned int retVal = SetImage(binningX_,
+                                   binningY_,
+                                   x_min + 1,
+                                   x_max,
+                                   y_min + 1,
+                                   y_max);
+
+    switch (retVal)
+    {
+    default:
+        HasError(retVal, __LINE__);
+        return;
+
+    case DRV_SUCCESS:
+        break;
+
+    case DRV_P1INVALID:
+        printf("HFlip invalid\n");
+        break;
+    case DRV_P2INVALID:
+        printf("VFlip invalid\n");
+        return;
+    };
 }
 
 void CCameraUnit_ANDORUSB::SetShutter()
@@ -469,11 +504,11 @@ void CCameraUnit_ANDORUSB::SetShutter()
 
     if (requestShutterOpen_ && (exposure_ > 0.0))
     {
-        HasError(::SetShutter(TTL_HIGH, SHUTTER_AUTO, shutterDelayInMs_, shutterDelayInMs_));
+        HasError(::SetShutter(TTL_HIGH, SHUTTER_AUTO, shutterDelayInMs_, shutterDelayInMs_), __LINE__);
     }
     else
     {
-        HasError(::SetShutter(TTL_HIGH, SHUTTER_CLOSE, 0, 0));
+        HasError(::SetShutter(TTL_HIGH, SHUTTER_CLOSE, 0, 0), __LINE__);
     }
 }
 
@@ -494,7 +529,7 @@ void CCameraUnit_ANDORUSB::SetExposure(float exposureInSeconds)
         exposureInSeconds = 0.0;
     }
 
-    if (HasError(SetExposureTime(exposureInSeconds)))
+    if (HasError(SetExposureTime(exposureInSeconds), __LINE__))
     {
         return;
     }
@@ -512,14 +547,14 @@ float CCameraUnit_ANDORUSB::GetExposure() const
     float exposure;
     float accumulate;
     float kinetic;
-    if (HasError(GetAcquisitionTimings(&exposure, &accumulate, &kinetic)))
+    if (HasError(GetAcquisitionTimings(&exposure, &accumulate, &kinetic), __LINE__))
     {
         return 0.0;
     }
     return exposure;
 }
 
-const ROI &CCameraUnit_ANDORUSB::GetROI()
+const ROI &CCameraUnit_ANDORUSB::GetROI() const
 {
     static ROI roi;
     roi.x_min = 0;

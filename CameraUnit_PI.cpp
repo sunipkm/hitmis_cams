@@ -11,6 +11,7 @@ static char THIS_FILE[] = __FILE__;
 #endif
 
 
+
 CCameraUnit_PI::CCameraUnit_PI()
 : binningX_(1)
 , binningY_(1)
@@ -27,9 +28,7 @@ CCameraUnit_PI::CCameraUnit_PI()
 , requestShutterOpen_(true)
 {
 	// do initialization stuff
-
-	short numcameras;
-	char cam_name[100];
+	short numcameras = 0;
 
 	// initialize camera
 
@@ -38,12 +37,21 @@ CCameraUnit_PI::CCameraUnit_PI()
 	// get number of cameras and names
 
     pl_cam_get_total(&numcameras);
+    if (numcameras == 0)
+    {
+       pl_pvcam_uninit();
+       return;
+    }
 	for (int i = 0; i<numcameras; i++) {
 		pl_cam_get_name(i,cam_name);
 	}
    // printf("Cameras found: %d\n", numcameras);
 	// Open the camera
-	pl_cam_open(cam_name, &hCam, OPEN_EXCLUSIVE);
+	if (pl_cam_open(cam_name, &hCam, OPEN_EXCLUSIVE) == FALSE)
+   {
+      pl_pvcam_uninit();
+      return;
+   }
    // printf("Camera opened\n");
 
 	// readout speed moved to its function below

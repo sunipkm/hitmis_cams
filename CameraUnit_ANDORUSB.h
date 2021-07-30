@@ -33,6 +33,7 @@ class CCameraUnit_ANDORUSB: public CCameraUnit
 
    mutable volatile unsigned int lastError_;
 
+   mutable char _camera_name[_MAX_PATH];
 
 public:
 
@@ -45,6 +46,9 @@ public:
    void CancelCapture();
 
    // Accessors
+   bool CameraReady() const { return m_initializationOK;}
+   const char *CameraName() const { return _camera_name;}
+
    void   SetExposure(float exposureInSeconds);
    float  GetExposure() const;
 
@@ -71,7 +75,7 @@ public:
 private:
    void SetStatus(std::string newVal) {CriticalSection::Lock lock(statusCriticalSection_);  status_ = newVal;}
    bool StatusIsIdle();
-   bool HasError(unsigned int error) const;
+   bool HasError(unsigned int error, unsigned int line) const;
    void SetShutter();
 
 };

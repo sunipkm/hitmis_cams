@@ -3,7 +3,11 @@
 @set OUT_EXE=image_display
 @set INCLUDES=/I .\ /I .\include /I .\imgui\include /I "%DXSDK_DIR%/Include"
 @set SOURCES=guimain.cpp ^
-jpge.cpp
-@set LIBS=/LIBPATH:"%DXSDK_DIR%/Lib/x86" d3d9.lib imgui\win32_lib\libimgui_win32.lib build\picam.lib lib\Pvcam32.lib
+jpge.cpp ^
+CriticalSection.cpp ^
+CameraUnit_PI.cpp ^
+CameraUnit_ANDORUSB.cpp ^
+ImageData.cpp
+@set LIBS=/LIBPATH:"%DXSDK_DIR%/Lib/x86" d3d9.lib imgui\win32_lib\libimgui_win32.lib lib\Pvcam32.lib lib\ATMCD32M.LIB
 mkdir %OUT_DIR%
 cl /nologo /Zi /MD %INCLUDES% /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS%

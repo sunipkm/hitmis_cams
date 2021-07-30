@@ -3,3 +3,4 @@
 **/.vscode
 **/imgui.ini
 **/build
+**/imgui/win32_lib

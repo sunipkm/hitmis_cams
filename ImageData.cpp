@@ -287,3 +287,10 @@ void CImageData::ApplyBinning(int binX, int binY)
    m_imageHeight = newImageHeight;
 }
 
+void CImageData::FlipHorizontal()
+{
+   for (int row = 0; row < m_imageHeight; ++ row )
+   {
+      std::reverse(m_imageData + row*m_imageWidth, m_imageData + (row+1) * m_imageWidth);
+   }
+}

@@ -42,6 +42,8 @@ class CCameraUnit_PI: public CCameraUnit
 
    mutable volatile unsigned int lastError_;
 
+   char cam_name[100];
+
 
 public:
 
@@ -55,6 +57,7 @@ public:
 
    // Accessors
    bool   CameraReady() const { return m_initializationOK;}
+   const char *CameraName() const { return cam_name;}
 
    void   SetExposure(float exposureInSeconds);
    float  GetExposure() const { return exposure_;}
