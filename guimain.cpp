@@ -11,6 +11,9 @@
 #include <strsafe.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "atlbase.h"
+#include "atlstr.h"
+#include "comutil.h"
 #include "CameraUnit_PI.h"
 #include "CameraUnit_ANDORUSB.h"
 #include "jpge.h"
@@ -77,7 +80,14 @@ typedef struct
 
 CCameraUnit *cam = NULL;
 double cam_temperature = 0;
-
+unsigned int Cadence = 1000;
+bool CadenceChange = false;
+bool TakeSingleShot = false;
+bool exposure_mode = true; // true == Continuous, false == Single shot
+int bin_roi[6] = {0, 0, 0, 0, 0, 0};
+bool RoiUpdate = false;
+bool RoiUpdated = false;
+bool CapturingImage = false;
 DWORD WINAPI ImageGenFunction(LPVOID _img)
 {
     static int height = cam->GetCCDHeight();
@@ -90,67 +100,96 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         long retryCount = 1;
         // cam->SetExposure(0.1); // 20 ms
         cam_temperature = cam->GetTemperature();
-        // cam->SetReadout(1);
-        CImageData imgdata = cam->CaptureImage(retryCount);
-        // printf("Capture complete\n");
-        if (!imgdata.HasData())
-            goto wait;
-        height = imgdata.GetImageHeight();
-        width = imgdata.GetImageWidth();
-        int img_sz = height * width;
-        uint16_t *imgptr = imgdata.GetImageData();
-        uint8_t *data = (uint8_t *)malloc(img_sz * 3); // 3 channels
-        printf("Capture size: %d x %d = %d, imgptr: %p, dataptr: %p\n", width, height, img_sz, imgptr, data);
-        for (int i = 0; i < img_sz; i++)
+        if (RoiUpdate)
         {
-            int idx = 3 * i;
-            uint8_t tmp = imgptr[i] / 0x100;
-            data[idx] = tmp;
-            if (imgptr[i] == 0xffff) // saturated
+            cam->SetBinningAndROI(bin_roi[0], bin_roi[1], bin_roi[2], bin_roi[3], bin_roi[4], bin_roi[5]);
+            RoiUpdate = false;
+            RoiUpdated = true;
+        }
+        // cam->SetReadout(1);
+        if (exposure_mode || TakeSingleShot)
+        {
+            CapturingImage = true;
+            CImageData imgdata = cam->CaptureImage(retryCount);
+            // printf("Capture complete\n");
+            if (!imgdata.HasData())
+                goto wait;
+            height = imgdata.GetImageHeight();
+            width = imgdata.GetImageWidth();
+            int img_sz = height * width;
+            uint16_t *imgptr = imgdata.GetImageData();
+            uint8_t *data = (uint8_t *)malloc(img_sz * 3); // 3 channels
+            printf("Capture size: %d x %d = %d, imgptr: %p, dataptr: %p\n", width, height, img_sz, imgptr, data);
+            for (int i = 0; i < img_sz; i++)
             {
-                data[idx + 1] = 0;
-                data[idx + 2] = 0;
+                int idx = 3 * i;
+                uint8_t tmp = imgptr[i] / 0x100;
+                data[idx] = tmp;
+                if (imgptr[i] == 0xffff) // saturated
+                {
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 0;
+                }
+                else
+                {
+                    data[idx + 1] = tmp;
+                    data[idx + 2] = tmp;
+                }
+            }
+            // printf("Image conversion complete\n");
+            // JPEG output buffer, has to be larger than expected JPEG size
+            uint8_t *j_data = (uint8_t *)malloc(height * width * 4 + 1024);
+            int j_data_sz = (height * width * 4 + 1024);
+            // JPEG parameters
+            jpge::params params;
+            params.m_quality = 100;
+            params.m_subsampling = static_cast<jpge::subsampling_t>(2); // 0 == grey
+            // JPEG compression and image update
+            if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 3, data, params))
+            {
+                printf("Failed to compress image to jpeg in memory\n");
             }
             else
             {
-                data[idx + 1] = tmp;
-                data[idx + 2] = tmp;
+                EnterCriticalSection(img->lock);
+                if (img->size > 0)
+                    free(img->data);
+
+                img->data = (uint8_t *)malloc(j_data_sz);
+                memcpy(img->data, j_data, j_data_sz);
+                img->size = j_data_sz;
+                img->width = width;
+                img->height = height;
+                img->data_avail = true;
+
+                LeaveCriticalSection(img->lock);
+                printf("Image size: %d\n", img->size);
+            }
+            // Free memory
+            free(data);
+            free(j_data);
+            if (TakeSingleShot)
+                TakeSingleShot = false;
+            if (exposure_mode)
+            {
+                unsigned int _Cadence = Cadence - 40, sleepAmt = 0;
+                while (sleepAmt < _Cadence)
+                {
+                    if (CadenceChange)
+                    {
+                        _Cadence = Cadence - 40;
+                        CadenceChange = false;
+                        if (sleepAmt >= _Cadence)
+                            break;
+                    }
+                    Sleep(40);
+                    sleepAmt += 40;
+                }
             }
         }
-        // printf("Image conversion complete\n");
-        // JPEG output buffer, has to be larger than expected JPEG size
-        uint8_t *j_data = (uint8_t *)malloc(height * width * 4 + 1024);
-        int j_data_sz = (height * width * 4 + 1024);
-        // JPEG parameters
-        jpge::params params;
-        params.m_quality = 100;
-        params.m_subsampling = static_cast<jpge::subsampling_t>(2); // 0 == grey
-        // JPEG compression and image update
-        if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 3, data, params))
-        {
-            printf("Failed to compress image to jpeg in memory\n");
-        }
-        else
-        {
-            EnterCriticalSection(img->lock);
-            if (img->size > 0)
-                free(img->data);
-
-            img->data = (uint8_t *)malloc(j_data_sz);
-            memcpy(img->data, j_data, j_data_sz);
-            img->size = j_data_sz;
-            img->width = width;
-            img->height = height;
-            img->data_avail = true;
-
-            LeaveCriticalSection(img->lock);
-            printf("Image size: %d\n", img->size);
-        }
-        // Free memory
-        free(data);
-        free(j_data);
     wait:
-        Sleep(1000); // every second
+        CapturingImage = false;
+        Sleep(40); // error case or single shot case
     }
     if (img->size)
         free(img->data);
@@ -250,43 +289,100 @@ jpg_img img[1];
 d3d9_texture img_texture[1];
 ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
+// image lock
+CRITICAL_SECTION img_crit;
+// Init Work InOut
+typedef struct
+{
+    bool Done;
+    bool CamInitCheck;
+    bool CamInit;
+    bool CaptureInit;
+    HWND hwnd;
+    HANDLE CaptureThread;
+    char CameraName[256];
+} InitWorkInOut;
+
+// Init Work
+DWORD WINAPI CameraInitFunction(LPVOID _inout)
+{
+    static bool firstRun = true;
+    if (firstRun)
+    {
+        firstRun = false;
+        InitWorkInOut *inout = (InitWorkInOut *)_inout;
+        inout->CamInit = false;
+        inout->CamInitCheck = false;
+        inout->CaptureInit = false;
+        inout->Done = false;
+        // PiCam
+        cam = new CCameraUnit_PI(); // try PI
+        int cam_number = 0;
+        bool cam_rdy = cam->CameraReady();
+        if (!cam_rdy)
+        {
+            printf("PI Pixis not detected. Checking if Andor iKon is available.\n");
+            delete cam;                       // not found
+            cam = new CCameraUnit_ANDORUSB(); // try ANDOR
+            cam_number = 1;
+        }
+        if (!cam->CameraReady())
+        {
+            delete cam; // not found
+            printf("PI Pixis or Andor iKon-M cameras not detected. Check if cameras are connected, turned on, and appropriate drivers are installed.\n");
+            inout->CamInitCheck = true;
+            goto end;
+        }
+        size_t cam_name_sz = sprintf(inout->CameraName, "Camera: %s %s", cam_number ? "Andor iKon-M" : "PI Pixis", cam->CameraName()) + 1;
+        inout->CamInit = true;
+        inout->CamInitCheck = true;
+        cam->SetTemperature(-60);
+        cam->SetBinningAndROI(1, 1); // binning 1x1, full image
+        cam->SetExposure(0.001);     // 0.01 ms
+        cam->SetReadout(1);
+        printf("%s\n", inout->CameraName);
+        wchar_t *wcam_name = new wchar_t[cam_name_sz];
+        mbstowcs(wcam_name, inout->CameraName, cam_name_sz);
+
+        ::SetWindowText(inout->hwnd, wcam_name);
+        ::UpdateWindow(inout->hwnd);
+        delete[] wcam_name;
+
+        printf("Main: Ptr %p\n", img);
+        Sleep(1000);
+        // Load Image Creator Thread
+        DWORD threadId;
+        inout->CaptureThread = CreateThread(NULL, 0, ImageGenFunction, img, 0, &threadId);
+
+        if (inout->CaptureThread == NULL)
+        {
+            printf("Could not create thread\n");
+            goto end;
+        }
+        inout->CaptureInit = true;
+
+        // initialize texture
+        img_texture->Reset();
+        inout->Done = true;
+    }
+end:
+    return NULL;
+}
+
+// Windows
+void InitWindow();
 void MainWindow();
+void ImageWindow(bool *active);
 
 // Main code
 int main(int, char **)
 {
-    // PiCam
-    cam = new CCameraUnit_PI(); // try PI
-    int cam_number = 0;
-    bool cam_rdy = cam->CameraReady();
-    if (!cam_rdy)
-    {
-        printf("PI Pixis not detected. Checking if Andor iKon is available.\n");
-        delete cam;                       // not found
-        cam = new CCameraUnit_ANDORUSB(); // try ANDOR
-        cam_number = 1;
-    }
-    if (!cam->CameraReady())
-    {
-        delete cam; // not found
-        printf("PI Pixis or Andor iKon-M cameras not detected. Check if cameras are connected, turned on, and appropriate drivers are installed.\n");
-        goto end2;
-    }
-    cam->SetTemperature(-60);
-    cam->SetBinningAndROI(1, 1); // binning 1x1, full image
-    cam->SetExposure(0.001);     // 0.01 ms
-    cam->SetReadout(1);
-    char cam_name[256];
-    size_t cam_name_sz = sprintf(cam_name, "Camera: %s %s", cam_number ? "Andor iKon-M" : "PI Pixis", cam->CameraName()) + 1;
-    printf("%s\n", cam_name);
-    wchar_t *wcam_name = new wchar_t[cam_name_sz];
-    mbstowcs(wcam_name, cam_name, cam_name_sz);
     // goto end2;
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), NULL};
     ::RegisterClassEx(&wc);
-    HWND hwnd = ::CreateWindow(wc.lpszClassName, wcam_name, WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+    HWND hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -342,33 +438,24 @@ int main(int, char **)
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/ProggyTiny.ttf", 10.0f);
     //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
     //IM_ASSERT(font != NULL);
+    InitWorkInOut Init_Params[1];
+    Init_Params->hwnd = hwnd;
+    memset(Init_Params->CameraName, 0x0, sizeof(Init_Params->CameraName));
+    HANDLE InitThreadHandle;
 
     // Image object
-    CRITICAL_SECTION img_crit;
     img->lock = &img_crit;
     InitializeCriticalSection(img->lock);
     img->data = NULL;
     img->size = 0;
     img->height = 0;
     img->width = 0;
-    printf("Main: Ptr %p\n", img);
-    Sleep(1000);
-    // Load Image Creator Thread
-    DWORD threadId;
-    HANDLE hThread = CreateThread(NULL, 0, ImageGenFunction, img, 0, &threadId);
-
-    if (hThread == NULL)
-    {
-        printf("Could not create thread\n");
-        goto end;
-    }
-
-    // initialize texture
-    img_texture->Reset();
 
     // Main loop
     while (!done)
     {
+        static bool firstRun = true;
+        static bool cameraInitWorkerRunning = false;
         // Poll and handle messages (inputs, window resize, etc.)
         // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
         // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application.
@@ -390,7 +477,99 @@ int main(int, char **)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        MainWindow();
+        if (firstRun) // Run Init Thread
+        {
+            DWORD threadID;
+            InitThreadHandle = CreateThread(NULL, 0, CameraInitFunction, Init_Params, 0, &threadID);
+            cameraInitWorkerRunning = true;
+            firstRun = false;
+        }
+        static int LoadingScreen = 0;
+        static bool allSuccess = false;
+        if (cameraInitWorkerRunning)
+        {
+            static char loadAnim[] = "\\\\\\\\\\|||||/////-----";
+            RECT rect;
+            int width, height;
+            if (GetWindowRect(hwnd, &rect))
+            {
+                width = rect.right - rect.left;
+                height = rect.bottom - rect.top;
+            }
+            ImGui::Begin("Camera Initialization Status");
+            ImGui::SetWindowSize(ImVec2(width, height), ImGuiCond_Always);
+            ImGui::SetWindowPos(ImVec2(rect.left, rect.top), ImGuiCond_Always);
+            bool buttonReady = false;
+            // printf("Status: %d %d %d %d\n", Init_Params->CamInitCheck, Init_Params->CamInit, Init_Params->CaptureInit, Init_Params->Done);
+            if (!(Init_Params->CamInitCheck))
+            {
+                ImGui::TextColored(ImVec4(0, 0, 1, 1), "Searching for camera");
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1, 0, 1, 1), "%c", loadAnim[(LoadingScreen++) % strlen(loadAnim)]);
+                goto button;
+            }
+            else if ((Init_Params->CamInitCheck) && (!Init_Params->CamInit) && (Init_Params->Done))
+            {
+                ImGui::PushStyleColor(0, ImVec4(1, 0, 0, 1));
+                ImGui::TextWrapped("Could not find a PI Pixis or Andor iKon-M Camera.\nPlease check power, USB connection and driver installations.\n");
+                ImGui::PopStyleColor();
+                buttonReady = true;
+                goto button;
+            }
+            else if (Init_Params->CamInit)
+            {
+                ImGui::PushStyleColor(0, ImVec4(20 / 255.0, 153 / 255.0, 33 / 255.0, 1));
+                ImGui::Text("Found %s", Init_Params->CameraName);
+                ImGui::PopStyleColor();
+            }
+            if (Init_Params->CamInit && (!Init_Params->CaptureInit))
+            {
+                ImGui::TextColored(ImVec4(0, 0, 1, 1), "Initializing Camera Capture Thread");
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1, 0, 1, 1), "%c", loadAnim[(LoadingScreen++) % strlen(loadAnim)]);
+            }
+            else if (Init_Params->CamInit && Init_Params->CaptureInit && (!Init_Params->Done))
+                ImGui::Text("Initialized Camera Capture Thread, waiting for worker to finish\n");
+            else if (Init_Params->CamInit && Init_Params->CaptureInit && Init_Params->Done)
+            {
+                ImGui::TextColored(ImVec4(0, 204 / 255.0, 1, 1), "Initialization Complete");
+                buttonReady = true;
+            }
+            else
+                ImGui::Text("Unknown State");
+        button:
+            if (!buttonReady)
+            {
+                ImGui::PushStyleColor(0, ImVec4(0.5, 0.5, 0.5, 0.5));
+                ImGui::Button("Continue");
+            }
+            if (buttonReady)
+            {
+                if (Init_Params->CamInitCheck && !Init_Params->CaptureInit)
+                {
+                    ImGui::PushStyleColor(0, ImVec4(0.8, 0, 0, 0.8));
+                    if (ImGui::Button("Exit"))
+                    {
+                        cameraInitWorkerRunning = false;
+                    }
+                }
+                else
+                {
+                    ImGui::PushStyleColor(0, ImVec4(0, 0.8, 0, 0.8));
+                    if (ImGui::Button("Continue"))
+                    {
+                        cameraInitWorkerRunning = false;
+                        allSuccess = true;
+                    }
+                }
+            }
+            ImGui::PopStyleColor();
+            ImGui::End();
+        }
+        else if (allSuccess)
+            MainWindow();
+        else
+            done = 1;
 
         // Rendering
         ImGui::EndFrame();
@@ -419,9 +598,12 @@ int main(int, char **)
         if (result == D3DERR_DEVICELOST && g_pd3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
             ResetDevice();
     }
-    cam->CancelCapture();
-    WaitForMultipleObjects(1, &hThread, true, 1200);
-    CloseHandle(hThread);
+    if (Init_Params->CaptureInit)
+    {
+        cam->CancelCapture();
+        WaitForMultipleObjects(1, &(Init_Params->CaptureThread), true, 1200);
+        CloseHandle(Init_Params->CaptureThread);
+    }
 end:
     DeleteCriticalSection(img->lock);
 
@@ -433,23 +615,135 @@ end:
     ::DestroyWindow(hwnd);
     ::UnregisterClass(wc.lpszClassName, wc.hInstance);
 
-    delete[] wcam_name;
-end2:
+    WaitForMultipleObjects(1, &InitThreadHandle, true, 1200);
+    CloseHandle(InitThreadHandle);
+
     printf("Exiting\n");
     return 0;
 }
 
 void MainWindow()
 {
-    static float f = 0.0f;
-    static int counter = 0;
+    static float CCDTempSet = -60.0f;
+    static bool firstRun = true;
 
-    ImGui::Begin("Hello, world!"); // Create a window called "Hello, world!" and append into it.
+    ImGui::Begin("Control Panel"); // Control Panel Window
+    // Begin CCD Temperature Setting
+    ImGui::Separator();
+    ImGui::Columns(2, "Temp_Column", false);
+    ImGui::PushItemWidth(50);
+    if (ImGui::InputFloat("CCD Set Temperature", &CCDTempSet, 0, 0, "%.0f C", ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        // clamps
+        if (CCDTempSet < -100.0)
+            CCDTempSet = -100.0;
+        if (CCDTempSet > 20.0)
+            CCDTempSet = 20.0;
+        cam->SetTemperature(CCDTempSet);
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    float CCDTempNow = cam_temperature;
+    ImGui::PushItemWidth(70);
+    if (fabs(CCDTempNow - CCDTempSet) > 5)
+        ImGui::PushStyleColor(0, ImVec4(1, 0, 0, 1));
+    else
+        ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+    ImGui::InputFloat("##CCD Temperature", &CCDTempNow, 0, 0, "%.1f C", ImGuiInputTextFlags_ReadOnly);
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::Text("CCD Temperature");
+    ImGui::PopItemWidth();
+    ImGui::Columns(1);
+    // End CCD Temperature Setting
 
-    ImGui::SliderFloat("float", &f, 0.0f, 1.0f);             // Edit 1 float using a slider from 0.0f to 1.0f
-    ImGui::ColorEdit3("clear color", (float *)&clear_color); // Edit 3 floats representing a color
+    // Begin Exposure Control
+    ImGui::Separator();
+    static double CCDExposure = 0;
+    if (firstRun)
+    {
+        CCDExposure = cam->GetExposure();
+    }
+    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        cam->SetExposure(CCDExposure);
+        CCDExposure = cam->GetExposure();
+    }
+    ImGui::Separator();
+    static bool single_shot = false;
+    ImGui::Columns(2, "ExposureControlMode");
+    static float LocalCadence = 1.0;
+    if (ImGui::RadioButton("Continuous Exposure", exposure_mode))
+    {
+        single_shot = false;
+        exposure_mode = true;
+        Cadence = ((unsigned int)(LocalCadence * 1000 / 40)) * 40;
+        CadenceChange = true;
+    }
+    ImGui::NextColumn();
+    ImGui::PushItemWidth(100);
+    if (ImGui::InputFloat("Cadence", &LocalCadence, 0, 0, "%.3f s", exposure_mode ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    {
+        if (LocalCadence < 0)
+            LocalCadence = 0.040; // 25 Hz
+        else if (LocalCadence > 600)
+            LocalCadence = 600;
+        Cadence = ((unsigned int)(LocalCadence * 1000 / 40)) * 40;
+        CadenceChange = true;
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    if (ImGui::RadioButton("Single Shot", single_shot))
+    {
+        exposure_mode = false;
+        single_shot = true;
+        Cadence = 0; // 40 ms loop
+        CadenceChange = true;
+    }
+    ImGui::NextColumn();
 
-    ImGui::Text("CCD Temperature: %lf", cam_temperature);
+    if (!single_shot)
+        ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
+    else if (!TakeSingleShot)
+       ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+    else
+        ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+    if (!TakeSingleShot)
+    {
+        if (ImGui::Button("Capture", ImVec2(100, 0)))
+            TakeSingleShot = true;
+    }
+    else if (single_shot && TakeSingleShot)
+        ImGui::Button("In Progress", ImVec2(100, 0));
+    ImGui::PopStyleColor();
+    ImGui::Columns(1);
+    // End Exposure Control
+
+    // Begin ROI Setup, TODO: ROI Implementation
+    ImGui::Separator();
+    if (firstRun || RoiUpdated)
+    {
+        bin_roi[0] = cam->GetBinningX();
+        bin_roi[1] = cam->GetBinningY();
+        bin_roi[2] = (cam->GetROI())->x_min;
+        bin_roi[3] = (cam->GetROI())->x_max;
+        bin_roi[4] = (cam->GetROI())->y_min;
+        bin_roi[5] = (cam->GetROI())->y_max;
+        RoiUpdated = false;
+    }
+    if (ImGui::InputInt2("Binning", bin_roi, CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+        RoiUpdate = true;
+    if (ImGui::InputInt2("X Bounds", &(bin_roi[2]), CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+        RoiUpdate = true;
+    if (ImGui::InputInt2("Y Bounds", &(bin_roi[4]), CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+        RoiUpdate = true;
+    // End ROI Setup
+    ImGui::Separator();
+    static bool show_img_window = true;
+    if (show_img_window)
+        ImageWindow(&show_img_window);
+
+    ImGui::Checkbox("Image Display", &show_img_window);
 
     // EnterCriticalSection(img->lock); // acquire lock before loading texture
     // if (img->size)                   // image available
@@ -457,15 +751,27 @@ void MainWindow()
     //     LoadTextureFromMemFile(img->data, img->size, img_texture, img_width, img_height);
     // }
     // LeaveCriticalSection(img->lock); // release lock
+
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    ImGui::End();
+    firstRun = false;
+}
+
+void ImageWindow(bool *active)
+{
+    ImGui::Begin("Image Window", active);
     static int old_win_width = 0;
     int win_width = ImGui::GetWindowSize().x;
     if (win_width != old_win_width)
         imgwindow_resized = true;
+    if (win_width < 128)
+        win_width = 128;
+    win_width = (win_width / 16) * 16;
     old_win_width = win_width; // update old width
-    img_texture->width = win_width - 5;
+    img_texture->width = win_width - 64;
     img_texture->height = 0;
     bool texture_valid = LoadTextureFromMemFile(img, img_texture);
-    ImGui::Text("Image: %d x %d pixels", img_texture->width, img_texture->height);
+    ImGui::Text("Image: %d x %d pixels", img->width, img->height);
     PDIRECT3DTEXTURE9 texture = img_texture->texture;
     int width = img_texture->width;
     int height = img_texture->height;
@@ -473,7 +779,6 @@ void MainWindow()
     {
         ImGui::Image((void *)texture, ImVec2(width, height)); // show image
     }
-    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
     ImGui::End();
 }
 

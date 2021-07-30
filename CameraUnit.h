@@ -41,7 +41,7 @@ public:
    virtual void   SetBinningAndROI(int x, int y, int x_min = 0, int x_max = 0, int y_min = 0, int y_max = 0) =0;
    virtual int    GetBinningX() const=0;
    virtual int    GetBinningY() const=0;
-   virtual const ROI&   GetROI()      const=0;
+   virtual const ROI   *GetROI()      const=0;
 
    virtual std::string GetStatus() const=0; // should return empty string when idle
 

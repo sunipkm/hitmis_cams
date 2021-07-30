@@ -72,7 +72,7 @@ public:
    void   SetBinningAndROI(int x, int y, int x_min = 0, int x_max = 0, int y_min = 0, int y_max = 0);
    int    GetBinningX() const { return binningX_;}
    int    GetBinningY() const { return binningY_;}
-   const ROI& GetROI() const;
+   const ROI *GetROI() const;
 
    std::string GetStatus() const {CriticalSection::Lock lock(statusCriticalSection_); return status_;}
 

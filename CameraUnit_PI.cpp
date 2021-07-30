@@ -317,12 +317,12 @@ void CCameraUnit_PI::SetReadout(int ReadSpeed)
 
 }
 
-const ROI& CCameraUnit_PI::GetROI() const
+const ROI *CCameraUnit_PI::GetROI() const
 {
    static ROI roi;
    roi.x_min = imageLeft_;
    roi.x_max = imageRight_;
    roi.y_min = imageBottom_;
    roi.y_max = imageTop_;
-   return roi;
+   return &roi;
 }

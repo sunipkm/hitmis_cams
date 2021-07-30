@@ -17,11 +17,11 @@ bool CCameraUnit_ANDORUSB::HasError(unsigned int error, unsigned int line) const
         printf("%s, %d: ANDOR Error\n", __FILE__, line);
         return true;
 
-#define ANDOR_ERROR(x)                                          \
-    case x:                                                     \
-        if (error != lastError_)                                \
+#define ANDOR_ERROR(x)                                               \
+    case x:                                                          \
+        if (error != lastError_)                                     \
             printf("%s, %d: ANDOR error: " #x "\n", __FILE__, line); \
-        lastError_ = error;                                     \
+        lastError_ = error;                                          \
         return true;
 #define NOT_ANDOR_ERROR(x) \
     case x:                \
@@ -464,6 +464,10 @@ void CCameraUnit_ANDORUSB::SetBinningAndROI(int binX, int binY, int x_min, int x
     lock.Relock();
     width_ = x_max - x_min;
     height_ = y_max - y_min;
+    xmin_ = x_min;
+    xmax_ = x_max;
+    ymin_ = y_min;
+    ymax_ = y_max;
 
     unsigned int retVal = SetImage(binningX_,
                                    binningY_,
@@ -529,6 +533,13 @@ void CCameraUnit_ANDORUSB::SetExposure(float exposureInSeconds)
         exposureInSeconds = 0.0;
     }
 
+    long int maxexposurems = exposureInSeconds * 1000;
+
+    if (maxexposurems > 10 * 60 * 1000) // max exposure 10 minutes
+        maxexposurems = 10 * 60 * 1000;
+
+    exposureInSeconds = maxexposurems * 0.001; // 1 ms increments only
+
     if (HasError(SetExposureTime(exposureInSeconds), __LINE__))
     {
         return;
@@ -554,12 +565,12 @@ float CCameraUnit_ANDORUSB::GetExposure() const
     return exposure;
 }
 
-const ROI &CCameraUnit_ANDORUSB::GetROI() const
+const ROI *CCameraUnit_ANDORUSB::GetROI() const
 {
     static ROI roi;
-    roi.x_min = 0;
-    roi.x_max = width_;
-    roi.y_min = 0;
-    roi.y_max = height_;
-    return roi;
+    roi.x_min = xmin_;
+    roi.x_max = xmax_ - 1;
+    roi.y_min = ymin_;
+    roi.y_max = ymax_ - 1;
+    return &roi;
 }
