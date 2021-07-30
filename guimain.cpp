@@ -35,6 +35,8 @@ typedef struct
     LPCRITICAL_SECTION lock;
     int size;
     uint8_t *data;
+    int width;
+    int height;
 } jpg_img;
 
 #define W(x) W_(x)
@@ -70,7 +72,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         long retryCount = 1;
         // cam->SetExposure(0.1); // 20 ms
         cam_temperature = cam->GetTemperature();
-        cam->SetReadout(1);
+        // cam->SetReadout(1);
         CImageData imgdata = cam->CaptureImage(retryCount);
         // printf("Capture complete\n");
         if (!imgdata.HasData())
@@ -104,9 +106,9 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         // JPEG parameters
         jpge::params params;
         params.m_quality = 100;
-        params.m_subsampling = static_cast<jpge::subsampling_t>(0); // grey
+        params.m_subsampling = static_cast<jpge::subsampling_t>(2); // 0 == grey
         // JPEG compression and image update
-        if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 1, data, params))
+        if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 3, data, params))
         {
             printf("Failed to compress image to jpeg in memory\n");
         }
@@ -119,6 +121,8 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             img->data = (uint8_t *)malloc(j_data_sz);
             memcpy(img->data, j_data, j_data_sz);
             img->size = j_data_sz;
+            img->width = width;
+            img->height = height;
 
             LeaveCriticalSection(img->lock);
             printf("Image size: %d\n", img->size);
@@ -162,8 +166,31 @@ wait:
  * @return true Succes
  * @return false Failure
  */
-bool LoadTextureFromMemFile(const uint8_t *img, const int size, PDIRECT3DTEXTURE9 &out_texture, int &out_width, int &out_height)
+bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size, */ PDIRECT3DTEXTURE9 &out_texture, int &out_width, int &out_height)
 {
+    if (jimg == NULL)
+        return false;
+    EnterCriticalSection(jimg->lock);
+    bool retval = false;
+    uint8_t *img = jimg->data;
+    int size = jimg->size;
+    if (size == 0)
+        goto exit;
+
+    // scaling
+    if (out_width && (!out_height)) // Height scaling
+    {
+        float scale = 1.0 * out_width / jimg->width;
+        out_height = scale * jimg->height;
+        // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, out_width, out_height, scale);
+    }
+
+    if (out_height && (!out_width)) // Height scaling
+    {
+        float scale = 1.0 * out_height / jimg->height;
+        out_width = scale * jimg->width;
+        // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, out_width, out_height, scale);
+    }
 
     PDIRECT3DTEXTURE9 texture = NULL; // local texture, will be released when this function is called the next time
 
@@ -184,7 +211,11 @@ bool LoadTextureFromMemFile(const uint8_t *img, const int size, PDIRECT3DTEXTURE
     out_texture->GetLevelDesc(0, &img_desc);
     out_width = (int)img_desc.Width;
     out_height = (int)img_desc.Height;
-    return true;
+    retval = true;
+
+exit:
+    LeaveCriticalSection(jimg->lock);
+    return retval;
 }
 // Main code
 int main(int, char **)
@@ -258,7 +289,7 @@ int main(int, char **)
     cam->SetTemperature(-60);
     cam->SetBinningAndROI(1, 1); // binning 1x1, full image
     cam->SetExposure(0.001);      // 0.01 ms
-    // cam->SetReadout(1);
+    cam->SetReadout(1);
     // goto end2;
 
     // Image object
@@ -268,6 +299,8 @@ int main(int, char **)
     InitializeCriticalSection(img->lock);
     img->data = NULL;
     img->size = 0;
+    img->height = 0;
+    img->width = 0;
     printf("Main: Ptr %p\n", img);
     Sleep(1000);
     // Load Image Creator Thread
@@ -320,12 +353,15 @@ int main(int, char **)
             static int img_height = 0;
             static PDIRECT3DTEXTURE9 img_texture = NULL;
 
-            EnterCriticalSection(img->lock); // acquire lock before loading texture
-            if (img->size)                   // image available
-            {
-                LoadTextureFromMemFile(img->data, img->size, img_texture, img_width, img_height);
-            }
-            LeaveCriticalSection(img->lock); // release lock
+            // EnterCriticalSection(img->lock); // acquire lock before loading texture
+            // if (img->size)                   // image available
+            // {
+            //     LoadTextureFromMemFile(img->data, img->size, img_texture, img_width, img_height);
+            // }
+            // LeaveCriticalSection(img->lock); // release lock
+            img_width = ImGui::GetWindowSize().x;
+            img_height = 0;
+            LoadTextureFromMemFile(img, img_texture, img_width, img_height);
             ImGui::Text("Image: %d x %d pixels", img_width, img_height);
             if (img_height > 0) // image can be shown
             {
