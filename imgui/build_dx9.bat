@@ -6,4 +6,4 @@ call build_imgui.bat
 @set SOURCES=src\main_dx9.cpp
 @set LIBS=/LIBPATH:"%DXSDK_DIR%/Lib/x86" d3d9.lib win32_lib\libimgui_win32.lib
 mkdir %OUT_DIR%
-cl /nologo /Zi /MD %INCLUDES% /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS%
+cl /nologo /Zi /MD /EHsc /wd4005 %INCLUDES% /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS%

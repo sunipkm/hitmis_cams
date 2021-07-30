@@ -5,6 +5,7 @@
 #include "imgui/imgui.h"
 #include "backend/imgui_impl_dx9.h"
 #include "backend/imgui_impl_win32.h"
+#include "implot/implot.h"
 #include <windows.h>
 #include <d3d9.h>
 #include <tchar.h>
@@ -59,6 +60,65 @@ typedef struct
     };
 } d3d9_texture;
 
+typedef struct
+{
+    uint16_t *data;
+    int size;
+    int width;
+    int height;
+    bool data_avail;
+
+    uint16_t data_min;
+    uint16_t data_max;
+    double data_average;
+
+    float *histdata;
+    int histdata_len;
+    float *xdata;   // average of all Y points
+    float *xpoints; // x axis
+    int xdata_len;
+    float *ydata;   // average of all X points
+    float *ypoints; // y axis
+    int ydata_len;
+
+    void Init()
+    {
+        data = 0;
+        size = 0;
+        width = 0;
+        height = 0;
+        data_avail = 0;
+        data_min = 0;
+        data_max = 0;
+        data_average = 0;
+        xdata = 0;
+        ydata = 0;
+        histdata = 0;
+        xpoints = 0;
+        ypoints = 0;
+        xdata_len = 0;
+        ydata_len = 0;
+        histdata_len = 0;
+    };
+
+    void Reset()
+    {
+        if (data)
+            delete[] data;
+        if (histdata)
+            delete[] histdata;
+        if (xdata)
+            delete[] xdata;
+        if (ydata)
+            delete[] ydata;
+        if (xpoints)
+            delete[] xpoints;
+        if (ypoints)
+            delete[] ypoints;
+        Init();
+    };
+} raw_image;
+
 #define W(x) W_(x)
 #define W_(x) L##x
 #define N(x) x
@@ -88,12 +148,16 @@ int bin_roi[6] = {0, 0, 0, 0, 0, 0};
 bool RoiUpdate = false;
 bool RoiUpdated = false;
 bool CapturingImage = false;
+
+raw_image main_image[1];
+
 DWORD WINAPI ImageGenFunction(LPVOID _img)
 {
     static int height = cam->GetCCDHeight();
     static int width = cam->GetCCDWidth();
     jpg_img *img = (jpg_img *)_img;
     img->data_avail = false;
+    main_image->Init();
     // printf("Thread: Ptr %p\n", _img);
     while (!done)
     {
@@ -119,11 +183,44 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             int img_sz = height * width;
             uint16_t *imgptr = imgdata.GetImageData();
             uint8_t *data = (uint8_t *)malloc(img_sz * 3); // 3 channels
+            main_image->Reset();
+            main_image->data = new uint16_t[img_sz];
+            main_image->size = img_sz;
+            main_image->width = width;
+            main_image->height = height;
+            main_image->xdata = new float[width];
+            main_image->xpoints = new float[width];
+            main_image->xdata_len = width;
+            memset(main_image->xdata, 0x0, width * sizeof(float));
+            main_image->ydata = new float[height];
+            main_image->ypoints = new float[height];
+            main_image->ydata_len = height;
+            main_image->histdata = new float[101];
+            main_image->histdata_len = 101;
+            memset(main_image->histdata, 0x0, main_image->histdata_len * sizeof(float));
+            memset(main_image->ydata, 0x0, height * sizeof(float));
+            main_image->data_min = 0xffff; // max
+            main_image->data_max = 0x0;    // min
             printf("Capture size: %d x %d = %d, imgptr: %p, dataptr: %p\n", width, height, img_sz, imgptr, data);
             for (int i = 0; i < img_sz; i++)
             {
                 int idx = 3 * i;
                 uint8_t tmp = imgptr[i] / 0x100;
+                // memcpy and findmax
+                (main_image->data)[i] = imgptr[i];
+                if (imgptr[i] < main_image->data_min)
+                    main_image->data_min = imgptr[i];
+                if (imgptr[i] > main_image->data_max)
+                    main_image->data_max = imgptr[i];
+                // average
+                main_image->data_average += imgptr[i];
+                // cross-histogram
+                (main_image->xdata)[i % width] += imgptr[i];
+                (main_image->ydata)[i / width] += imgptr[i];
+                // full histogram
+                int hidx = (((float)imgptr[i]) / 0xffff) * (main_image->histdata_len - 1);
+                (main_image->histdata)[hidx]++;
+
                 data[idx] = tmp;
                 if (imgptr[i] == 0xffff) // saturated
                 {
@@ -136,6 +233,18 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
                     data[idx + 2] = tmp;
                 }
             }
+            // histogram normalization
+            for (int i = 0; i < width; i++)
+            {
+                (main_image->xdata)[i] /= height;
+                (main_image->xpoints)[i] = i;
+            }
+            for (int i = 0; i < height; i++)
+            {
+                (main_image->ydata)[i] /= width;
+                (main_image->ypoints)[i] = i;
+            }
+            main_image->data_average /= main_image->size;
             // printf("Image conversion complete\n");
             // JPEG output buffer, has to be larger than expected JPEG size
             uint8_t *j_data = (uint8_t *)malloc(height * width * 4 + 1024);
@@ -161,6 +270,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
                 img->width = width;
                 img->height = height;
                 img->data_avail = true;
+                main_image->data_avail = true;
 
                 LeaveCriticalSection(img->lock);
                 printf("Image size: %d\n", img->size);
@@ -363,15 +473,40 @@ DWORD WINAPI CameraInitFunction(LPVOID _inout)
 
         // initialize texture
         img_texture->Reset();
+    end:
         inout->Done = true;
     }
-end:
     return NULL;
+}
+
+HWND hwnd;
+
+BOOL WindowPositionGet(HWND h, RECT *rect)
+{
+    BOOL retval = true;
+    RECT wrect;
+    retval &= GetWindowRect(h, &wrect);
+    RECT crect;
+    retval &= GetClientRect(h, &crect);
+    POINT lefttop = {crect.left, crect.top}; // Practicaly both are 0
+    ClientToScreen(h, &lefttop);
+    POINT rightbottom = {crect.right, crect.bottom};
+    ClientToScreen(h, &rightbottom);
+
+    // int left_border = lefttop.x - wrect.left;              // Windows 10: includes transparent part
+    // int right_border = wrect.right - rightbottom.x;        // As above
+    // int bottom_border = wrect.bottom - rightbottom.y;      // As above
+    // int top_border_with_title_bar = lefttop.y - wrect.top; // There is no transparent part
+    rect->left = lefttop.x;
+    rect->right = rightbottom.x;
+    rect->top = lefttop.y;
+    rect->bottom = rightbottom.y;
+    return retval;
 }
 
 // Windows
 void InitWindow();
-void MainWindow();
+void MainWindow(bool *active);
 void ImageWindow(bool *active);
 
 // Main code
@@ -382,7 +517,7 @@ int main(int, char **)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), NULL};
     ::RegisterClassEx(&wc);
-    HWND hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+    hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 300, NULL, NULL, wc.hInstance, NULL);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -399,6 +534,7 @@ int main(int, char **)
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
@@ -451,11 +587,13 @@ int main(int, char **)
     img->height = 0;
     img->width = 0;
 
+    static bool notDone = true;
     // Main loop
     while (!done)
     {
         static bool firstRun = true;
         static bool cameraInitWorkerRunning = false;
+        done = !notDone;
         // Poll and handle messages (inputs, window resize, etc.)
         // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
         // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application.
@@ -485,13 +623,14 @@ int main(int, char **)
             firstRun = false;
         }
         static int LoadingScreen = 0;
+        static int ContinuePrompt = 0;
         static bool allSuccess = false;
         if (cameraInitWorkerRunning)
         {
             static char loadAnim[] = "\\\\\\\\\\|||||/////-----";
             RECT rect;
             int width, height;
-            if (GetWindowRect(hwnd, &rect))
+            if (WindowPositionGet(hwnd, &rect))
             {
                 width = rect.right - rect.left;
                 height = rect.bottom - rect.top;
@@ -508,7 +647,7 @@ int main(int, char **)
                 ImGui::TextColored(ImVec4(1, 0, 1, 1), "%c", loadAnim[(LoadingScreen++) % strlen(loadAnim)]);
                 goto button;
             }
-            else if ((Init_Params->CamInitCheck) && (!Init_Params->CamInit) && (Init_Params->Done))
+            if ((Init_Params->CamInitCheck) && (!Init_Params->CamInit) && (Init_Params->Done))
             {
                 ImGui::PushStyleColor(0, ImVec4(1, 0, 0, 1));
                 ImGui::TextWrapped("Could not find a PI Pixis or Andor iKon-M Camera.\nPlease check power, USB connection and driver installations.\n");
@@ -516,7 +655,7 @@ int main(int, char **)
                 buttonReady = true;
                 goto button;
             }
-            else if (Init_Params->CamInit)
+            if (Init_Params->CamInit)
             {
                 ImGui::PushStyleColor(0, ImVec4(20 / 255.0, 153 / 255.0, 33 / 255.0, 1));
                 ImGui::Text("Found %s", Init_Params->CameraName);
@@ -556,7 +695,8 @@ int main(int, char **)
                 else
                 {
                     ImGui::PushStyleColor(0, ImVec4(0, 0.8, 0, 0.8));
-                    if (ImGui::Button("Continue"))
+                    ContinuePrompt++;
+                    if (ImGui::Button("Continue") || ((ContinuePrompt / ImGui::GetIO().Framerate) > 2))
                     {
                         cameraInitWorkerRunning = false;
                         allSuccess = true;
@@ -567,7 +707,7 @@ int main(int, char **)
             ImGui::End();
         }
         else if (allSuccess)
-            MainWindow();
+            MainWindow(&notDone);
         else
             done = 1;
 
@@ -609,6 +749,7 @@ end:
 
     ImGui_ImplDX9_Shutdown();
     ImGui_ImplWin32_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
 
     CleanupDeviceD3D();
@@ -622,12 +763,25 @@ end:
     return 0;
 }
 
-void MainWindow()
+void MainWindow(bool *active)
 {
     static float CCDTempSet = -60.0f;
     static bool firstRun = true;
-
-    ImGui::Begin("Control Panel"); // Control Panel Window
+    // get windows window position
+    RECT rect;
+    int width, height;
+    if (WindowPositionGet(hwnd, &rect))
+    {
+        width = rect.right - rect.left;
+        height = rect.bottom - rect.top;
+    }
+    // begin ImGui window
+    ImGui::Begin("Control Panel", active); // Control Panel Window
+    // set ImGui window position
+    ImGui::SetWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    ImGui::SetWindowPos(ImVec2(rect.left, rect.top), ImGuiCond_Always);
+    // GetWindowRect(hwnd, &rect);
+    // printf("%d %d\n", rect.right - rect.left, rect.bottom - rect.top);
     // Begin CCD Temperature Setting
     ImGui::Separator();
     ImGui::Columns(2, "Temp_Column", false);
@@ -705,7 +859,7 @@ void MainWindow()
     if (!single_shot)
         ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
     else if (!TakeSingleShot)
-       ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+        ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
     else
         ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
     if (!TakeSingleShot)
@@ -719,7 +873,7 @@ void MainWindow()
     ImGui::Columns(1);
     // End Exposure Control
 
-    // Begin ROI Setup, TODO: ROI Implementation
+    // Begin ROI Setup
     ImGui::Separator();
     if (firstRun || RoiUpdated)
     {
@@ -762,22 +916,61 @@ void ImageWindow(bool *active)
     ImGui::Begin("Image Window", active);
     static int old_win_width = 0;
     int win_width = ImGui::GetWindowSize().x;
+    int win_height = ImGui::GetWindowSize().y;
     if (win_width != old_win_width)
         imgwindow_resized = true;
-    if (win_width < 128)
-        win_width = 128;
+    if (win_width < 512)
+        win_width = 512;
+    if (win_height < 768)
+        win_height = 768;
     win_width = (win_width / 16) * 16;
+    win_height = (win_height / 16) * 16;
     old_win_width = win_width; // update old width
-    img_texture->width = win_width - 64;
+    ImGui::SetWindowSize(ImVec2(win_width, win_height), ImGuiCond_Always);
+    img_texture->width = win_width - 128;
     img_texture->height = 0;
     bool texture_valid = LoadTextureFromMemFile(img, img_texture);
     ImGui::Text("Image: %d x %d pixels", img->width, img->height);
     PDIRECT3DTEXTURE9 texture = img_texture->texture;
     int width = img_texture->width;
     int height = img_texture->height;
+    ImVec2 posbefore = ImGui::GetCursorPos();
+    ImVec2 newpos = posbefore;
+    newpos.x += width;
     if (texture_valid && texture) // image can be shown
     {
         ImGui::Image((void *)texture, ImVec2(width, height)); // show image
+    }
+    ImGui::SetCursorPos(newpos);
+    // printf("%f %f\n", posbefore.x, posbefore.y);;
+    ImPlot::SetNextPlotLimitsX(main_image->data_min, main_image->data_max, ImGuiCond_Always);
+    ImPlot::SetNextPlotLimitsY(0, main_image->height, ImGuiCond_Always);
+    if (ImPlot::BeginPlot("##Y Hist", NULL, NULL, ImVec2(96, height), 0, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_Invert | ImPlotAxisFlags_NoTickLabels)) //, 0, sideflags, sideflags))
+    {
+        ImPlot::PlotLine("Y Axis", main_image->ydata, main_image->ypoints, main_image->ydata_len, 0, sizeof(float));
+        ImPlot::EndPlot();
+    }
+    posbefore.y += height;
+    ImGui::SetCursorPos(posbefore);
+    ImPlot::SetNextPlotLimitsX(0, main_image->width, ImGuiCond_Always);
+    ImPlot::SetNextPlotLimitsY(main_image->data_min, main_image->data_max, ImGuiCond_Always);
+    if (ImPlot::BeginPlot("##X Hist", NULL, NULL, ImVec2(width, 96))) //, 0, sideflags, sideflags))
+    {
+        ImPlot::PlotLine("X Axis", main_image->xpoints, main_image->xdata, main_image->xdata_len, 0, sizeof(float));
+        ImPlot::EndPlot();
+    }
+    static bool ShowHistogram = true;
+    ImGui::Checkbox("Show Histogram", &ShowHistogram);
+    if (ShowHistogram)
+    {
+        ImGui::Begin("Histogram Window", &ShowHistogram);
+        ImGui::Text("Min: %u, Max: %u, Average: %lf", main_image->data_min, main_image->data_max, main_image->data_average);
+        if (ImPlot::BeginPlot("Pixel Histogram", "Bins", "Counts", ImVec2(-1, -1)))
+        {
+            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)0xffff) / main_image->histdata_len);
+            ImPlot::EndPlot();
+        }
+        ImGui::End();
     }
     ImGui::End();
 }

@@ -8,4 +8,4 @@ call build_imgui.bat
 src\imgui_impl_dx12.cpp
 @set LIBS=d3d12.lib d3dcompiler.lib dxgi.lib win32_lib\libimgui_win32.lib
 mkdir %OUT_DIR%
-cl /nologo /Zi /MD %INCLUDES% /D ImTextureID=ImU64 /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS%
+cl /nologo /Zi /MD /EHsc /wd4005 %INCLUDES% /D ImTextureID=ImU64 /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS%
