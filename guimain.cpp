@@ -128,8 +128,8 @@ typedef struct
 {
     raw_image *raw = NULL;
     jpg_img *jpg = NULL;
-    uint16_t min = 0;
-    uint16_t max = 0;
+    int min = 0;
+    int max = 0;
     bool adjust = false;
 } JpegLoaderInOut;
 
@@ -1045,8 +1045,46 @@ void ImageWindow(bool *active)
         ImPlot::PlotLine("X Axis", main_image->xpoints, main_image->xdata, main_image->xdata_len, 0, sizeof(float));
         ImPlot::EndPlot();
     }
-    static bool ShowHistogram = true;
+    static bool ShowHistogram = false;
+    ImGui::Separator();
+    ImGui::Columns(2, "ImageSystemColums", true);
+    // Minima and Maxima selector
+    ImGui::PushItemWidth(100);
+    if (ImGui::InputInt("Pixel Min", &(jpeg_inout->min), 1, 100, ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (jpeg_inout->min > 0xffff)
+            jpeg_inout->min = jpeg_inout->max - 100;
+        if (jpeg_inout->min < 0)
+            jpeg_inout->min = 0;
+        jpeg_inout->adjust = true;
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    ImGui::PushItemWidth(100);
+    if (ImGui::InputInt("Pixel Max", &(jpeg_inout->max), 1, 100, ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (jpeg_inout->max < 0)
+            jpeg_inout->max = 0;
+        if (jpeg_inout->max <= jpeg_inout->min)
+            jpeg_inout->max = jpeg_inout->min + 100;
+        if (jpeg_inout->max > 0xffff)
+            jpeg_inout->max = 0xffff;
+        jpeg_inout->adjust = true;
+    }
+    ImGui::PopItemWidth();
+    // End Minima and Maxima Selector
+    ImGui::NextColumn();
     ImGui::Checkbox("Show Histogram", &ShowHistogram);
+    ImGui::NextColumn();
+    if (ImGui::InputInt("JPEG Quality", &(JpegQuality), 1, 10, ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (JpegQuality < 30)
+            JpegQuality = 30;
+        if (JpegQuality > 100)
+            JpegQuality = 100;
+    }
+    ImGui::Columns(1);
+    ImGui::Separator();
     if (ShowHistogram)
     {
         ImGui::Begin("Histogram Window", &ShowHistogram);
