@@ -1,0 +1,3 @@
+1. Copy all .sys files to C:\Windows\System32\drivers
+2. Copy all .dll files to C:\Windows\System32
+3. Copy all .inf and .pnf files to C:\Windows\inf

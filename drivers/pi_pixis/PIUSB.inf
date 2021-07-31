@@ -1,0 +1,101 @@
+[Version]
+; copyright 2004 Andrew Pargeter & Associates
+;this install will only on work Win2k and WinXP!
+Signature="$Windows NT$"
+Class=PI_USB
+ClassGUID="{B0FB3FB4-AD95-4a5c-974D-D59EB3D83171}"
+Provider=%PI%
+DriverVer=9/08/2008,1.7
+
+[Manufacturer]
+%PI%=PI
+
+[ControlFlags]
+ExcludeFromSelect=*
+
+;Win2k+ only
+[ClassInstall32]
+;DelFiles=PIUSB.SysFiles,PIUSB.DllFiles
+AddReg=ClassInstall32.AddReg
+
+;Win2k+ only
+[ClassInstall32.AddReg]
+HKR,,,0,%ClassDesc%
+HKR,,Icon,,-20
+HKR,,EnumPropPages32,,"apausbprop.dll,PropPageProvider" 
+
+[PI]
+%USB\VID_0BD7&PID_A010.DeviceDesc%=ST133, USB\VID_0BD7&PID_A010
+%USB\VID_0BD7&PID_A026.DeviceDesc%=PIXIS, USB\VID_0BD7&PID_A026
+
+;------------------------ ST133 ----------------------------;
+
+;Win2k+ only
+[ST133.NT]
+;CopyFiles=PIUSB.DllFiles,PIUSB.SysFiles
+
+;Win2k+ only
+[ST133.NT.Services]
+;the first parameter is the name of the service in 
+;HKLM\system\CurrentControlSet\Services
+;the service is named PIUSB in this case
+AddService = PIUSB, 0x00000002, ST133USB.AddService
+
+;Win2k+ only
+[ST133USB.AddService]
+DisplayName    = %PIUSB.SvcDesc%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START  
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %10%\System32\Drivers\apausb.sys
+AddReg=ST133USB.AddReg
+
+[ST133USB.AddReg]
+HKR,,ClassGUID,0,%PIClassGUID%
+HKR,%ST133ConfigKey%,MaxTransfer,0x00010001,3424256
+HKR,%ST133ConfigKey%,AuthKey,0,%ST133AuthKey%
+HKR,%ST133ConfigKey%,RenumOnHibernate,0x00010001,0
+
+;------------------------ PIXIS ----------------------------;
+
+;Win2k+ only
+[PIXIS.NT]
+;CopyFiles=PIUSB.DllFiles,PIUSB.SysFiles
+
+;Win2k+ only
+[PIXIS.NT.Services]
+;the first parameter is the name of the service in 
+;HKLM\system\CurrentControlSet\Services
+;the service is named PIUSB in this case
+AddService = PIUSB, 0x00000002, PIXISUSB.AddService
+
+;Win2k+ only
+[PIXISUSB.AddService]
+DisplayName    = %PIUSB.SvcDesc%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START  
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %10%\System32\Drivers\apausb.sys
+AddReg=PIXISUSB.AddReg
+
+[PIXISUSB.AddReg]
+HKR,,ClassGUID,0,%PIClassGUID%
+HKR,%PIXISConfigKey%,MaxTransfer,0x00010001,3424256
+HKR,%PIXISConfigKey%,AuthKey,0,%PIXISAuthKey%
+HKR,%PIXISConfigKey%,RenumOnHibernate,0x00010001,0
+
+;------------------------ Strings ----------------------------;
+
+[Strings]
+PI="Princeton Instruments"
+ST133ConfigKey="Vid_0bd7&Pid_A010"
+PIXISConfigKey="Vid_0bd7&Pid_A026"
+USB\VID_0BD7&PID_A010.DeviceDesc="ST133 USB Controller"
+USB\VID_0BD7&PID_A026.DeviceDesc="PIXIS USB Camera"
+PIUSB.SvcDesc="Princeton Instruments USB Driver"
+InstallDisk="USBDriverInstallationDisk"
+ClassDesc="Princeton Instruments USB Devices"
+PIClassGUID="{B0FB3FB4-AD95-4a5c-974D-D59EB3D83171}"
+ST133AuthKey="c64c5d38770c864f"
+PIXISAuthKey="da651abf103b2661"
+

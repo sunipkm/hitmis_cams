@@ -1,0 +1,76 @@
+; PI1394.INF -- PI1394 Device .inf for Windows 2000 and Windows XP
+; Copyright (c) Princeton Instruments
+
+[Version]
+signature="$Windows NT$"
+Class=PI1394DataAcquisition
+ClassGuid={C9F6E6EA-4A14-4009-9443-880BFBACD1FE}
+;CatalogFile = pi1394.cat
+Provider=%MFG%
+DriverVer=3/18/2009,0.0.1.8
+
+[ControlFlags]
+ExcludeFromSelect = *
+
+
+;[DestinationDirs]
+;defaultdestdir=11
+;PI1394.CopyDriver=10,system32\drivers
+;PI1394.CopyDll=11
+;DefaultDestDir=11;%WinDir%\System32
+;PI1394.CopyDriver=12 ;%WinDir%\System32\Drivers
+
+
+; =================== Class Sections ===========================
+[ClassInstall32]
+Addreg=PI1394ClassReg
+
+[ClassInstall]
+Addreg=PI1394ClassReg
+
+[PI1394ClassReg]
+HKR,,,,%PI1394ClassName%
+HKR,,Icon,,-20
+
+; =================== Table of content =========================
+
+[Manufacturer]
+%MicrosoftMfg%=PrincetonInstruments
+
+
+[PrincetonInstruments]
+%1394\Princeton_Instruments&1394%=PI1394,1394\Princeton_Instruments&1394
+%1394\Princeton_Instruments&1394%=PI1394,1394\13D8&1
+
+[PI1394]
+AddReg=PI1394.AddReg
+;CopyFiles=PI1394.CopyDriver
+
+[PI1394.AddReg]
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,PI1394.sys
+
+[PI1394.NT]
+AddReg=PI1394.AddReg
+;CopyFiles=PI1394.CopyDriver
+
+[PI1394.NT.Services]
+AddService=PI1394,2,PI1394_ServiceInstall
+
+[PI1394_ServiceInstall]
+DisplayName=%1394\13D8&1.DeviceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\PI1394.sys
+
+[PI1394.CopyDriver]
+PI1394.sys
+
+
+[Strings]
+MFG="Princeton Instruments"
+PI1394ClassName="PI-1394 Camera Interface"
+
+MicrosoftMfg="Princeton Instruments"
+1394\Princeton_Instruments&1394="PI-1394 Multiport Camera Interface"

@@ -1,0 +1,24 @@
+# Control and Visualization Software 
+## For Princeton Instruments Pixis and Andor iKon-M Cameras
+The software is written for Windows NT, and must be compiled using Microsoft Visual Studio C++ 14.0 or higher (2019 Community Edition).
+
+### Drivers
+1. Drivers for PI Pixis are provided in `drivers/pi_pixis`. This driver is 32-bit only, and requires a 32-bit Windows to install. Follow the instructions provided in the directory to install the driver. Do not plug in the camera before installing the driver.
+2. Drivers for Andor iKon are provided in `drivers/andor_ikon`. This driver is 64-bit compatible and does not require any special installation method. Simply plug in the camera, and in Device Manager point to this directory and Windows will find and install the drivers automatically.
+
+### Pre-requisites
+1. Microsoft Visual C++ 2019 Community Edition
+2. DirectX SDK (June 2010) 
+
+### To Build
+1. Open `cmd`, and execute `vcvarsall.bat x86` (given MSVC is in your path) to load compiler variables.
+2. `cd` to the repository.
+3. Execute `build_dx9.bat`, this will build the executable under the `build` directory.
+
+### To Run
+1. Copy over all files under `runtime` directory to `build`, or any directory where you put the executable.
+2. Connect one of the cameras. If both cameras are connected, PI Pixis will have the priority.
+3. Double click the executable file to run the software.
+
+### Utility
+The software provides easy control for cooler temperature, exposure time, continuous exposure, automatic exposure control, region of interest selection, binning, and capture of images as compressed FITS files. It also provides basic statistical analysis on the captured data, such as cross-section or histogram.
