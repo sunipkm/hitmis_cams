@@ -18,6 +18,8 @@
 #include "CameraUnit_PI.h"
 #include "CameraUnit_ANDORUSB.h"
 #include "jpge.h"
+#include "fitsio.h"
+#include <chrono>
 
 #include <D3dx9tex.h>
 #pragma comment(lib, "D3dx9")
@@ -33,7 +35,14 @@ void CleanupDeviceD3D();
 void ResetDevice();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+char GlobalCameraName[20];
+
 bool done = false;
+
+uint64_t getTime()
+{
+    return ((std::chrono::duration_cast<std::chrono::milliseconds>((std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now())).time_since_epoch())).count());
+}
 
 typedef struct
 {
@@ -65,6 +74,15 @@ typedef struct
 {
     LPCRITICAL_SECTION lock = 0;
 
+    uint64_t tstamp;
+    uint32_t exposure_ms;
+    uint16_t binX;
+    uint16_t binY;
+    uint16_t x_min;
+    uint16_t x_max;
+    uint16_t y_min;
+    uint16_t y_max;
+    float ccdtemp;
     uint16_t *data;
     int size;
     int width;
@@ -87,6 +105,15 @@ typedef struct
 
     void Init()
     {
+        tstamp = 0;
+        exposure_ms = 0;
+        binX = 0;
+        binY = 0;
+        x_min = 0;
+        x_max = 0;
+        y_min = 0;
+        y_max = 0;
+        ccdtemp = 0;
         data = 0;
         size = 0;
         width = 0;
@@ -165,6 +192,12 @@ bool CapturingImage = false;
 
 raw_image main_image[1];
 
+bool SaveImageCommand = false;
+int SaveImageNum = 0;
+int CurrentSaveImageNum = 0;
+char SaveImagePrefix[20] = "hitmis";
+char SaveImageDir[100] = ".\\fits\\";
+
 DWORD WINAPI ImageGenFunction(LPVOID _img)
 {
     static int height = cam->GetCCDHeight();
@@ -185,7 +218,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             RoiUpdated = true;
         }
         // cam->SetReadout(1);
-        if (exposure_mode || TakeSingleShot)
+        if (exposure_mode || TakeSingleShot || (SaveImageCommand && (CurrentSaveImageNum < SaveImageNum)))
         {
             CapturingImage = true;
             CImageData imgdata = cam->CaptureImage(retryCount);
@@ -215,6 +248,15 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             memset(main_image->ydata, 0x0, height * sizeof(float));
             main_image->data_min = 0xffff; // max
             main_image->data_max = 0x0;    // min
+            main_image->tstamp = getTime();
+            main_image->exposure_ms = cam->GetExposure() * 1000;
+            main_image->binX = cam->GetBinningX();
+            main_image->binY = cam->GetBinningY();
+            main_image->x_min = (cam->GetROI())->x_min;
+            main_image->x_max = (cam->GetROI())->x_max;
+            main_image->y_min = (cam->GetROI())->y_min;
+            main_image->y_max = (cam->GetROI())->y_max;
+            main_image->ccdtemp = cam->GetTemperature();
             printf("Capture size: %d x %d = %d\n", width, height, img_sz);
             for (int i = 0; i < img_sz; i++)
             {
@@ -252,7 +294,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
 
             if (TakeSingleShot)
                 TakeSingleShot = false;
-            if (exposure_mode)
+            if (exposure_mode || (SaveImageCommand && (CurrentSaveImageNum < SaveImageNum)))
             {
                 unsigned int _Cadence = Cadence - 40, sleepAmt = 0;
                 while (sleepAmt < _Cadence)
@@ -280,6 +322,51 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
 
 int JpegQuality = 70;
 
+char SaveFitsStatus[30];
+
+void SaveFits(char *filePrefix, char *DirPrefix, int i, int n, raw_image *image)
+{
+    static char defaultFilePrefix[] = "hitmis";
+    static char defaultDirPrefix[] = ".\\fits\\";
+    if ((filePrefix == NULL) || (strlen(filePrefix) == 0))
+        filePrefix = defaultFilePrefix;
+    if ((DirPrefix == NULL) || (strlen(DirPrefix) == 0))
+        DirPrefix = defaultFilePrefix;
+    char fileName[256];
+    _snprintf(fileName, sizeof(fileName), "%s\\%s_%ums_%d_%d_%llu.fit[compress]", DirPrefix, filePrefix, image->exposure_ms, i, n, image->tstamp);
+    fitsfile *fptr;
+    int status = 0, bitpix = USHORT_IMG, naxis = 2;
+    int bzero = 32768, bscale = 1;
+    long naxes[2] = {(long)(image->width), (long)(image->height)};
+    unlink(fileName);
+    if (!fits_create_file(&fptr, fileName, &status))
+    {
+        fits_create_img(fptr, bitpix, naxis, naxes, &status);
+        fits_write_key(fptr, TSTRING, "PROGRAM", (void *)"hitmis_explorer", NULL, &status);
+        fits_write_key(fptr, TSTRING, "CAMERA", (void *)GlobalCameraName, NULL, &status);
+        fits_write_key(fptr, TULONGLONG, "TIMESTAMP", &(image->tstamp), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "BZERO", &bzero, NULL, &status);
+        fits_write_key(fptr, TUSHORT, "BSCALE", &bscale, NULL, &status);
+        fits_write_key(fptr, TFLOAT, "CCDTEMP", &(image->ccdtemp), NULL, &status);
+        fits_write_key(fptr, TUINT, "EXPOSURE_MS", &(image->exposure_ms), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "BINX", &(image->binX), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "BINY", &(image->binY), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "MINX", &(image->x_min), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "MAXX", &(image->x_max), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "MINY", &(image->y_min), NULL, &status);
+        fits_write_key(fptr, TUSHORT, "MAXY", &(image->y_max), NULL, &status);
+
+        long fpixel[] = {1, 1};
+        fits_write_pix(fptr, TUSHORT, fpixel, (image->width) * (image->height), image->data, &status);
+        fits_close_file(fptr, &status);
+        _snprintf(SaveFitsStatus, sizeof(SaveFitsStatus), "saved %d of %d", i, n);
+    }
+    else
+    {
+        _snprintf(SaveFitsStatus, sizeof(SaveFitsStatus), "failed %d of %d", i, n);
+    }
+}
+
 bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
 {
     bool retval = true;
@@ -292,7 +379,7 @@ bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
     float scale = 0xffff / ((float)(max - min));
     for (int i = 0; i < raw->size; i++) // for each pixel in raw image
     {
-        int idx = 3 * i; // RGB pixel in JPEG source bitmap
+        int idx = 3 * i;      // RGB pixel in JPEG source bitmap
         if (imgptr[i] >= max) // saturation
         {
             data[idx + 0] = 0xff;
@@ -324,7 +411,7 @@ bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
     {
         EnterCriticalSection(jpg->lock);
         if (jpg->size > 0)
-            delete [] jpg->data;
+            delete[] jpg->data;
 
         jpg->data = new uint8_t[j_data_sz];
         memcpy(jpg->data, j_data, j_data_sz);
@@ -359,6 +446,14 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
         {
             inout->raw->new_data = false;
             ConvertRawToJpeg(inout->raw, inout->jpg, inout->min, inout->max);
+            if (SaveImageCommand)
+            {
+                if (CurrentSaveImageNum < SaveImageNum)
+                {
+                    SaveFits(SaveImagePrefix, SaveImageDir, CurrentSaveImageNum, SaveImageNum, inout->raw);
+                    CurrentSaveImageNum++;
+                }
+            }
         }
         else if (inout->raw->data_avail && inout->adjust) // old data available and adjust request received
         {
@@ -513,6 +608,7 @@ DWORD WINAPI CameraInitFunction(LPVOID _inout)
             goto end;
         }
         size_t cam_name_sz = sprintf(inout->CameraName, "Camera: %s %s", cam_number ? "Andor iKon-M" : "PI Pixis", cam->CameraName()) + 1;
+        _snprintf(GlobalCameraName, sizeof(GlobalCameraName), "%s %s", cam_number ? "Andor iKon-M" : "PI Pixis", cam->CameraName());
         inout->CamInit = true;
         inout->CamInitCheck = true;
         cam->SetTemperature(-60);
@@ -594,7 +690,7 @@ int main(int, char **)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), NULL};
     ::RegisterClassEx(&wc);
-    hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 300, NULL, NULL, wc.hInstance, NULL);
+    hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 420, NULL, NULL, wc.hInstance, NULL);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -853,6 +949,7 @@ void MainWindow()
 {
     static float CCDTempSet = -60.0f;
     static bool firstRun = true;
+    static bool SaveExposureFiles = false;
     // get windows window position
     RECT rect;
     int width, height;
@@ -904,7 +1001,7 @@ void MainWindow()
     {
         CCDExposure = cam->GetExposure();
     }
-    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
     {
         cam->SetExposure(CCDExposure);
         CCDExposure = cam->GetExposure();
@@ -922,7 +1019,7 @@ void MainWindow()
     }
     ImGui::NextColumn();
     ImGui::PushItemWidth(100);
-    if (ImGui::InputFloat("Cadence", &LocalCadence, 0, 0, "%.3f s", exposure_mode ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    if (ImGui::InputFloat("Cadence", &LocalCadence, 0, 0, "%.3f s", exposure_mode || SaveExposureFiles ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
     {
         if (LocalCadence < 0)
             LocalCadence = 0.040; // 25 Hz
@@ -950,7 +1047,7 @@ void MainWindow()
         ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
     if (!TakeSingleShot)
     {
-        if (ImGui::Button("Capture", ImVec2(100, 0)))
+        if (ImGui::Button("Capture", ImVec2(100, 0)) && (!CapturingImage))
             TakeSingleShot = true;
     }
     else if (single_shot && TakeSingleShot)
@@ -979,6 +1076,80 @@ void MainWindow()
         RoiUpdate = true;
     // End ROI Setup
     ImGui::Separator();
+    // Begin Exposure Save Setup
+    ImGui::InputText("Prefix", SaveImagePrefix, IM_ARRAYSIZE(SaveImagePrefix), (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
+    ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
+    static int LoadingScreen = 0;
+    if (SaveExposureFiles && SaveImageCommand)
+    {
+        static char loadAnim[] = "\\\\\\\\\\|||||/////-----";
+        ImGui::Text("%d out of %d exposures completed, running %c", CurrentSaveImageNum, SaveImageNum, loadAnim[(LoadingScreen++) % strlen(loadAnim)]);
+        ImGui::Text("SaveFits: %s", SaveFitsStatus);
+        if (CurrentSaveImageNum >= SaveImageNum)
+        {
+            SaveImageCommand = false;
+            CurrentSaveImageNum = 0;
+            SaveFitsStatus[0] = '\0';
+        }
+    }
+    else
+    {
+        ImGui::Text("Not storing exposures to disk.");
+        ImGui::Text("");
+    }
+    ImGui::Columns(3, "FileSaveSystem", true);
+    ImGui::Checkbox("Save Exposures", &SaveExposureFiles);
+    if (SaveExposureFiles)
+    {
+        exposure_mode = false;
+        single_shot = true;
+        // Cadence = 0; // 40 ms loop
+        // CadenceChange = true;
+    }
+    ImGui::NextColumn();
+    ImGui::PushItemWidth(40);
+    if (ImGui::InputInt("Exposures", &SaveImageNum, 0, 0, (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (SaveImageNum < 0)
+            SaveImageNum = 0;
+        if (SaveImageNum > 100)
+            SaveImageNum = 100;
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    ImVec4 ButtonColor;
+    if (!SaveExposureFiles)
+    {
+        ImGui::PushStyleColor(0, ImVec4(0.5, 0.5, 0.5, 1));
+        ImGui::Button("Start Exposure", ImVec2(100, 0));
+    }
+    else if (!SaveImageCommand)
+    {
+        ImGui::PushStyleColor(0, ImVec4(0, 0.8, 0, 1));
+        if (ImGui::Button("Start Exposure", ImVec2(130, 0)))
+        {
+            if (LocalCadence < 0)
+                LocalCadence = 0.040; // 25 Hz
+            else if (LocalCadence > 600)
+                LocalCadence = 600;
+            Cadence = ((unsigned int)(LocalCadence * 1000 / 40)) * 40;
+            CadenceChange = true;
+            SaveImageCommand = true;
+            SaveFitsStatus[0] = '\0';
+        }
+    }
+    else
+    {
+        ImGui::PushStyleColor(0, ImVec4(1, 0, 0, 1));
+        if (ImGui::Button("Stop Exposure", ImVec2(130, 0)))
+        {
+            SaveImageNum = 0;
+            SaveFitsStatus[0] = '\0';
+        }
+    }
+    ImGui::PopStyleColor();
+    ImGui::Columns(1);
+    // End Exposure Save Setup
     static bool show_img_window = true;
     if (show_img_window)
         ImageWindow(&show_img_window);
