@@ -43,6 +43,7 @@ typedef struct
     int width;
     int height;
     bool data_avail;
+    bool new_data;
 } jpg_img;
 
 typedef struct
@@ -62,11 +63,14 @@ typedef struct
 
 typedef struct
 {
+    LPCRITICAL_SECTION lock = 0;
+
     uint16_t *data;
     int size;
     int width;
     int height;
     bool data_avail;
+    bool new_data;
 
     uint16_t data_min;
     uint16_t data_max;
@@ -88,6 +92,7 @@ typedef struct
         width = 0;
         height = 0;
         data_avail = 0;
+        new_data = 0;
         data_min = 0;
         data_max = 0;
         data_average = 0;
@@ -118,6 +123,15 @@ typedef struct
         Init();
     };
 } raw_image;
+
+typedef struct
+{
+    raw_image *raw = NULL;
+    jpg_img *jpg = NULL;
+    uint16_t min = 0;
+    uint16_t max = 0;
+    bool adjust = false;
+} JpegLoaderInOut;
 
 #define W(x) W_(x)
 #define W_(x) L##x
@@ -182,7 +196,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             width = imgdata.GetImageWidth();
             int img_sz = height * width;
             uint16_t *imgptr = imgdata.GetImageData();
-            uint8_t *data = (uint8_t *)malloc(img_sz * 3); // 3 channels
+            EnterCriticalSection(main_image->lock);
             main_image->Reset();
             main_image->data = new uint16_t[img_sz];
             main_image->size = img_sz;
@@ -201,11 +215,9 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             memset(main_image->ydata, 0x0, height * sizeof(float));
             main_image->data_min = 0xffff; // max
             main_image->data_max = 0x0;    // min
-            printf("Capture size: %d x %d = %d, imgptr: %p, dataptr: %p\n", width, height, img_sz, imgptr, data);
+            printf("Capture size: %d x %d = %d\n", width, height, img_sz);
             for (int i = 0; i < img_sz; i++)
             {
-                int idx = 3 * i;
-                uint8_t tmp = imgptr[i] / 0x100;
                 // memcpy and findmax
                 (main_image->data)[i] = imgptr[i];
                 if (imgptr[i] < main_image->data_min)
@@ -220,18 +232,6 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
                 // full histogram
                 int hidx = (((float)imgptr[i]) / 0xffff) * (main_image->histdata_len - 1);
                 (main_image->histdata)[hidx]++;
-
-                data[idx] = tmp;
-                if (imgptr[i] == 0xffff) // saturated
-                {
-                    data[idx + 1] = 0;
-                    data[idx + 2] = 0;
-                }
-                else
-                {
-                    data[idx + 1] = tmp;
-                    data[idx + 2] = tmp;
-                }
             }
             // histogram normalization
             for (int i = 0; i < width; i++)
@@ -245,39 +245,11 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
                 (main_image->ypoints)[i] = i;
             }
             main_image->data_average /= main_image->size;
+            main_image->data_avail = true;
+            main_image->new_data = true;
+            LeaveCriticalSection(main_image->lock);
             // printf("Image conversion complete\n");
-            // JPEG output buffer, has to be larger than expected JPEG size
-            uint8_t *j_data = (uint8_t *)malloc(height * width * 4 + 1024);
-            int j_data_sz = (height * width * 4 + 1024);
-            // JPEG parameters
-            jpge::params params;
-            params.m_quality = 100;
-            params.m_subsampling = static_cast<jpge::subsampling_t>(2); // 0 == grey
-            // JPEG compression and image update
-            if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 3, data, params))
-            {
-                printf("Failed to compress image to jpeg in memory\n");
-            }
-            else
-            {
-                EnterCriticalSection(img->lock);
-                if (img->size > 0)
-                    free(img->data);
 
-                img->data = (uint8_t *)malloc(j_data_sz);
-                memcpy(img->data, j_data, j_data_sz);
-                img->size = j_data_sz;
-                img->width = width;
-                img->height = height;
-                img->data_avail = true;
-                main_image->data_avail = true;
-
-                LeaveCriticalSection(img->lock);
-                printf("Image size: %d\n", img->size);
-            }
-            // Free memory
-            free(data);
-            free(j_data);
             if (TakeSingleShot)
                 TakeSingleShot = false;
             if (exposure_mode)
@@ -303,6 +275,101 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
     }
     if (img->size)
         free(img->data);
+    return NULL;
+}
+
+int JpegQuality = 70;
+
+bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
+{
+    bool retval = true;
+    // source raw image
+    int width = raw->width, height = raw->height;
+    uint16_t *imgptr = raw->data;
+    // temporary bitmap buffer
+    uint8_t *data = new uint8_t[width * height * 3]; // 3 channels for RGB
+    // Data conversion
+    float scale = 0xffff / ((float)(max - min));
+    for (int i = 0; i < raw->size; i++) // for each pixel in raw image
+    {
+        int idx = 3 * i; // RGB pixel in JPEG source bitmap
+        if (imgptr[i] >= max) // saturation
+        {
+            data[idx + 0] = 0xff;
+            data[idx + 1] = 0x0;
+            data[idx + 2] = 0x0;
+        }
+        else // scaling
+        {
+            uint8_t tmp = (imgptr[i] - min) * scale / 0x100;
+            data[idx + 0] = tmp;
+            data[idx + 1] = tmp;
+            data[idx + 2] = tmp;
+        }
+    }
+    // JPEG output buffer, has to be larger than expected JPEG size
+    uint8_t *j_data = new uint8_t[width * height * 4 + 1024]; // extra room for JPEG conversion
+    int j_data_sz = (height * width * 4 + 1024);
+    // JPEG parameters
+    jpge::params params;
+    params.m_quality = JpegQuality;
+    params.m_subsampling = static_cast<jpge::subsampling_t>(2); // 0 == grey, 2 == RGB
+    // JPEG compression and image update
+    if (!jpge::compress_image_to_jpeg_file_in_memory(j_data, j_data_sz, width, height, 3, data, params))
+    {
+        printf("Failed to compress image to jpeg in memory\n");
+        retval = false;
+    }
+    else
+    {
+        EnterCriticalSection(jpg->lock);
+        if (jpg->size > 0)
+            delete [] jpg->data;
+
+        jpg->data = new uint8_t[j_data_sz];
+        memcpy(jpg->data, j_data, j_data_sz);
+        jpg->size = j_data_sz;
+        jpg->width = width;
+        jpg->height = height;
+        jpg->data_avail = true;
+        jpg->new_data = true;
+        LeaveCriticalSection(jpg->lock);
+        printf("JPEG size: %d\n", jpg->size);
+    }
+    // Free memory
+    delete[] data;
+    delete[] j_data;
+    return retval;
+}
+
+// Image Display InOut Struct
+JpegLoaderInOut jpeg_inout[1];
+
+DWORD WINAPI ImageConvertFunction(LPVOID _in)
+{
+    JpegLoaderInOut *inout = (JpegLoaderInOut *)_in; // recast
+    while (!done)
+    {
+        if (inout->max <= inout->min)
+            inout->max = 0xffff;
+        if ((inout->raw == NULL) || (inout->jpg == NULL))
+            goto sleep;
+        EnterCriticalSection(inout->raw->lock);
+        if (inout->raw->new_data) // new data available, make jpeg
+        {
+            inout->raw->new_data = false;
+            ConvertRawToJpeg(inout->raw, inout->jpg, inout->min, inout->max);
+        }
+        else if (inout->raw->data_avail && inout->adjust) // old data available and adjust request received
+        {
+            inout->adjust = false;
+            ConvertRawToJpeg(inout->raw, inout->jpg, inout->min, inout->max);
+        }
+    bil:
+        LeaveCriticalSection(inout->raw->lock);
+    sleep:
+        Sleep(20);
+    }
     return NULL;
 }
 
@@ -361,12 +428,12 @@ bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size
         // printf("Height scaling: Source %d x %d | Output %d x %d | Scale %f\n", jimg->width, jimg->height, t->width, t->height, scale);
     }
     // if window has not been resized or data is not available or texture is valid, keep the old texture
-    if ((!imgwindow_resized) && (!jimg->data_avail) && (t->texture))
+    if ((!imgwindow_resized) && (!jimg->new_data) && (t->texture))
     {
         retval = true;
         goto exit;
     }
-    // TODO: Optimize loading. Load only when new data is available/resize happened
+
     PDIRECT3DTEXTURE9 texture = NULL; // local texture, will be released when this function is called the next time
 
     // HRESULT hr = D3DXCreateTextureFromFileInMemory(g_pd3dDevice, img, size, &texture); // load image file to texture
@@ -374,7 +441,7 @@ bool LoadTextureFromMemFile(jpg_img *jimg, /* const uint8_t *img, const int size
     if (hr != S_OK)
         goto exit;
     imgwindow_resized = false; // window size has been addressed
-    jimg->data_avail = false;  // data availability has been addressed
+    jimg->new_data = false;    // data availability has been addressed
 
     if (t->texture) // if texture was loaded before
     {
@@ -401,6 +468,7 @@ ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
 // image lock
 CRITICAL_SECTION img_crit;
+CRITICAL_SECTION raw_crit;
 // Init Work InOut
 typedef struct
 {
@@ -410,6 +478,7 @@ typedef struct
     bool CaptureInit;
     HWND hwnd;
     HANDLE CaptureThread;
+    HANDLE ConvertThread;
     char CameraName[256];
 } InitWorkInOut;
 
@@ -473,6 +542,14 @@ DWORD WINAPI CameraInitFunction(LPVOID _inout)
 
         // initialize texture
         img_texture->Reset();
+
+        inout->ConvertThread = CreateThread(NULL, 0, ImageConvertFunction, jpeg_inout, 0, &threadId);
+        if (inout->ConvertThread == NULL)
+        {
+            printf("Could not create convert thread\n");
+            inout->CaptureInit = false;
+            goto end;
+        }
     end:
         inout->Done = true;
     }
@@ -506,7 +583,7 @@ BOOL WindowPositionGet(HWND h, RECT *rect)
 
 // Windows
 void InitWindow();
-void MainWindow(bool *active);
+void MainWindow();
 void ImageWindow(bool *active);
 
 // Main code
@@ -581,11 +658,18 @@ int main(int, char **)
 
     // Image object
     img->lock = &img_crit;
+    main_image->lock = &raw_crit;
     InitializeCriticalSection(img->lock);
+    InitializeCriticalSection(main_image->lock);
     img->data = NULL;
     img->size = 0;
     img->height = 0;
     img->width = 0;
+    jpeg_inout->adjust = false;
+    jpeg_inout->jpg = img;
+    jpeg_inout->raw = main_image;
+    jpeg_inout->min = 0;
+    jpeg_inout->max = 0;
 
     static bool notDone = true;
     // Main loop
@@ -707,7 +791,7 @@ int main(int, char **)
             ImGui::End();
         }
         else if (allSuccess)
-            MainWindow(&notDone);
+            MainWindow();
         else
             done = 1;
 
@@ -741,8 +825,10 @@ int main(int, char **)
     if (Init_Params->CaptureInit)
     {
         cam->CancelCapture();
-        WaitForMultipleObjects(1, &(Init_Params->CaptureThread), true, 1200);
+        HANDLE openHandles[] = {Init_Params->CaptureThread, Init_Params->ConvertThread};
+        WaitForMultipleObjects(IM_ARRAYSIZE(openHandles), openHandles, true, 1200);
         CloseHandle(Init_Params->CaptureThread);
+        CloseHandle(Init_Params->ConvertThread);
     }
 end:
     DeleteCriticalSection(img->lock);
@@ -763,7 +849,7 @@ end:
     return 0;
 }
 
-void MainWindow(bool *active)
+void MainWindow()
 {
     static float CCDTempSet = -60.0f;
     static bool firstRun = true;
@@ -776,7 +862,7 @@ void MainWindow(bool *active)
         height = rect.bottom - rect.top;
     }
     // begin ImGui window
-    ImGui::Begin("Control Panel", active); // Control Panel Window
+    ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
     // set ImGui window position
     ImGui::SetWindowSize(ImVec2(width, height), ImGuiCond_Always);
     ImGui::SetWindowPos(ImVec2(rect.left, rect.top), ImGuiCond_Always);
