@@ -22,3 +22,8 @@ The software is written for Windows NT, and must be compiled using Microsoft Vis
 
 ### Utility
 The software provides easy control for cooler temperature, exposure time, continuous exposure, automatic exposure control, region of interest selection, binning, and capture of images as compressed FITS files. It also provides basic statistical analysis on the captured data, such as cross-section or histogram.
+
+### Screenshots
+![Main Control Panel](screenshots/hitmis_win1.png)
+![Image Display Panel](screenshots/hitmis_win2.png)
+![Pixel Histogram Panel](screenshots/hitmis_win3.png)
