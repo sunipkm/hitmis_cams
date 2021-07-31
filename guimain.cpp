@@ -320,6 +320,74 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
     return NULL;
 }
 
+int _compare_uint16(const void *a, const void *b)
+{
+    return (*((unsigned short *)a) - *((unsigned short *)b));
+}
+static bool EnableAutoExposure = false;
+static bool HaveNewAutoExposure = false;
+static float AutoExposureVal = 0.001;
+static int FindExposureMode = 90 * 10;
+bool FindExposureMedian = false;
+static float PixelTargetValue = 40000.0;
+static float PixelTargetUncertainty = 5000.0;
+static float MaxAllowedOptimumExposure = 10;
+
+void FindOptimumExposure(raw_image *image)
+{
+    double result = image->exposure_ms * 0.001;
+    double exposure = image->exposure_ms * 0.001;
+    AutoExposureVal = exposure;
+    printf("Input: %lf s\n", exposure);
+    double val;
+    uint16_t *picdata = new uint16_t[image->size];
+    memcpy(picdata, image->data, image->size * sizeof(uint16_t));
+    qsort(picdata, image->size, sizeof(unsigned short), _compare_uint16);
+
+    if (FindExposureMedian)
+    {
+        if (image->size)
+            val = (picdata[image->size / 2] + picdata[image->size / 2 + 1]) * 0.5;
+        else
+            val = picdata[image->size / 2];
+    }
+    else
+    {
+        bool direction;
+        if (picdata[0] < picdata[image->size - 1])
+            direction = true;
+        else
+            direction = false;
+        unsigned int coord = floor((FindExposureMode * (image->size - 1) * 0.001));
+        if (direction)
+            val = picdata[coord];
+        else
+        {
+            if (coord == 0)
+                coord = 1;
+            val = picdata[image->size - coord];
+        }
+    }
+
+    printf("Uncertainty: %lf, Reference: %lf\n", fabs(PixelTargetValue - val), PixelTargetUncertainty);
+    if (fabs(PixelTargetValue - val) < PixelTargetUncertainty)
+    {
+        goto ret;
+    }
+
+    /** If calculated median pixel is within PixelTargetValue +/- PixelTargetUncertainty, return current exposure **/
+
+    result = ((double)PixelTargetValue) * exposure / ((double)val);
+
+    if (result > MaxAllowedOptimumExposure)
+        result = MaxAllowedOptimumExposure;
+    // round to 1 ms
+    result = ((int)(result * 1000)) * 0.001;
+    AutoExposureVal = result;
+ret:
+    HaveNewAutoExposure = true;
+}
+
 int JpegQuality = 70;
 
 char SaveFitsStatus[30];
@@ -452,6 +520,15 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
                 {
                     SaveFits(SaveImagePrefix, SaveImageDir, CurrentSaveImageNum, SaveImageNum, inout->raw);
                     CurrentSaveImageNum++;
+                }
+            }
+            if (EnableAutoExposure)
+            {
+                FindOptimumExposure(inout->raw);
+                if (HaveNewAutoExposure)
+                {
+                    cam->SetExposure(AutoExposureVal);
+                    HaveNewAutoExposure = false;
                 }
             }
         }
@@ -690,7 +767,7 @@ int main(int, char **)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), NULL};
     ::RegisterClassEx(&wc);
-    hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 420, NULL, NULL, wc.hInstance, NULL);
+    hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 470, NULL, NULL, wc.hInstance, NULL);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -958,10 +1035,30 @@ void MainWindow()
         width = rect.right - rect.left;
         height = rect.bottom - rect.top;
     }
+    static int old_height = 0, old_width = 0, DisplaySizeInTitle = 0;
     // begin ImGui window
-    ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+    if (DisplaySizeInTitle == 0)
+        ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+    else if (DisplaySizeInTitle > 0)
+    {
+        DisplaySizeInTitle--;
+        char MainWindowName[50];
+        _snprintf(MainWindowName, sizeof(MainWindowName), "Control Panel | Window Size %d x %d", width, height);
+        ImGui::Begin(MainWindowName, NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+    }
+    else
+    {
+        DisplaySizeInTitle = 0;
+        ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+    }
     // set ImGui window position
+    if (height != old_height || width != old_width)
+    {
+        DisplaySizeInTitle = 3600;
+    }
     ImGui::SetWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    old_width = width;
+    old_height = height;
     ImGui::SetWindowPos(ImVec2(rect.left, rect.top), ImGuiCond_Always);
     // GetWindowRect(hwnd, &rect);
     // printf("%d %d\n", rect.right - rect.left, rect.bottom - rect.top);
@@ -997,11 +1094,11 @@ void MainWindow()
     // Begin Exposure Control
     ImGui::Separator();
     static double CCDExposure = 0;
-    if (firstRun)
+    if (firstRun || EnableAutoExposure)
     {
         CCDExposure = cam->GetExposure();
     }
-    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", CapturingImage || EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
     {
         cam->SetExposure(CCDExposure);
         CCDExposure = cam->GetExposure();
@@ -1036,6 +1133,7 @@ void MainWindow()
         single_shot = true;
         Cadence = 0; // 40 ms loop
         CadenceChange = true;
+        EnableAutoExposure = false;
     }
     ImGui::NextColumn();
 
@@ -1053,6 +1151,59 @@ void MainWindow()
     else if (single_shot && TakeSingleShot)
         ImGui::Button("In Progress", ImVec2(100, 0));
     ImGui::PopStyleColor();
+    ImGui::Columns(1);
+    ImGui::Separator();
+    ImGui::Columns(2, "AutoExposureControl", true);
+    if (ImGui::Checkbox("Enable Auto Exposure", &EnableAutoExposure))
+    {
+        // TODO: Sanity check
+    }
+    if (!EnableAutoExposure)
+        FindExposureMedian = false;
+    ImGui::NextColumn();
+    ImGui::Checkbox("Measure Median Pixel", &FindExposureMedian);
+    ImGui::NextColumn();
+    static int PercentileTarget = FindExposureMode / 10;
+    ImGui::PushItemWidth(50);
+    if (ImGui::InputInt("Percentile Pixel", &PercentileTarget, 0, 0, EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    {
+        if (PercentileTarget < 10)
+            PercentileTarget = 10;
+        if (PercentileTarget > 100)
+            PercentileTarget = 100;
+        FindExposureMode = PercentileTarget * 10;
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    ImGui::PushItemWidth(50);
+    if (ImGui::InputFloat("Max Exposure", &MaxAllowedOptimumExposure, 0, 0, "%.1f s", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    {
+        if (MaxAllowedOptimumExposure < 0.1)
+            MaxAllowedOptimumExposure = 0.1;
+        if (MaxAllowedOptimumExposure > 200)
+            MaxAllowedOptimumExposure = 200;
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    ImGui::PushItemWidth(50);
+    if (ImGui::InputFloat("Pixel Target", &PixelTargetValue, 0, 0, "%.0f", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    {
+        if (PixelTargetValue < 100)
+            PixelTargetValue = 100;
+        if (PixelTargetValue > 0xffff)
+            PixelTargetValue = 0xffff;
+    }
+    ImGui::PopItemWidth();
+    ImGui::NextColumn();
+    ImGui::PushItemWidth(50);
+    if (ImGui::InputFloat("Uncertainty", &PixelTargetUncertainty, 0, 0, "%.0f", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    {
+        if (PixelTargetValue < 100)
+            PixelTargetValue = 100;
+        if (PixelTargetValue > 20000)
+            PixelTargetValue = 20000;
+    }
+    ImGui::PopItemWidth();
     ImGui::Columns(1);
     // End Exposure Control
 
