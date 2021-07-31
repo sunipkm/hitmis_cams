@@ -24,6 +24,6 @@ The software is written for Windows NT, and must be compiled using Microsoft Vis
 The software provides easy control for cooler temperature, exposure time, continuous exposure, automatic exposure control, region of interest selection, binning, and capture of images as compressed FITS files. It also provides basic statistical analysis on the captured data, such as cross-section or histogram.
 
 ### Screenshots
-![Main Control Panel](https://github.com/sunipkmukherjee/hitmis_cams/blob/master/screenshots/hitmis_win1.png?raw=true)
-![Image Display Panel](https://github.com/sunipkmukherjee/hitmis_cams/blob/master/screenshots/hitmis_win2.png?raw=true)
-![Pixel Histogram Panel](https://github.com/sunipkmukherjee/hitmis_cams/blob/master/screenshots/hitmis_win3.png?raw=true)
+![Main Control Panel](https://github.com/sunipkmukherjee/hitmis_cams/blob/a558d7867177754c4ce997324bd77169213df72e/screenshots/hitmis_win1.PNG)
+![Image Display Panel](https://github.com/sunipkmukherjee/hitmis_cams/blob/a558d7867177754c4ce997324bd77169213df72e/screenshots/hitmis_win2.PNG)
+![Pixel Histogram Panel](https://github.com/sunipkmukherjee/hitmis_cams/blob/a558d7867177754c4ce997324bd77169213df72e/screenshots/hitmis_win3.PNG)
