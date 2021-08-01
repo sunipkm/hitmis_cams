@@ -527,6 +527,8 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
                 FindOptimumExposure(inout->raw);
                 if (HaveNewAutoExposure)
                 {
+                    if (AutoExposureVal < 0.001)
+                        AutoExposureVal = 0.001;
                     cam->SetExposure(AutoExposureVal);
                     HaveNewAutoExposure = false;
                 }
@@ -1098,9 +1100,10 @@ void MainWindow()
     {
         CCDExposure = cam->GetExposure();
     }
-    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", CapturingImage || EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
     {
-        cam->SetExposure(CCDExposure);
+        if (!CapturingImage)
+            cam->SetExposure(CCDExposure);
         CCDExposure = cam->GetExposure();
     }
     ImGui::Separator();
