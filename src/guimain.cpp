@@ -98,6 +98,7 @@ typedef struct
     int histdata_len;
     int histdata_min;
     int histdata_max;
+    float histdata_maxcount;
     float *xdata;   // average of all Y points
     float *xpoints; // x axis
     int xdata_len;
@@ -135,6 +136,7 @@ typedef struct
         histdata_len = 0;
         histdata_min = 0;
         histdata_max = 0;
+        histdata_maxcount = 0;
     };
 
     void Reset()
@@ -314,6 +316,9 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
                     int hidx = (((float)imgptr[i] - main_image->data_min) / hist_range) * (main_image->histdata_len - 1);
                     (main_image->histdata)[hidx]++;
                 }
+                for (int i = 0; i < main_image->histdata_len; i++)
+                    if (main_image->histdata_maxcount < (main_image->histdata)[i])
+                        main_image->histdata_maxcount = (main_image->histdata)[i];
             }
             main_image->data_average /= main_image->size;
             main_image->data_avail = true;
@@ -1494,9 +1499,11 @@ void ImageWindow(bool *active)
     {
         ImGui::Begin("Histogram Window", &ShowHistogram);
         ImGui::Text("Min: %u, Max: %u, Average: %lf", main_image->data_min, main_image->data_max, main_image->data_average);
+        ImPlot::SetNextPlotLimitsX(main_image->histdata_min, main_image->histdata_max, ImGuiCond_Always);
+        ImPlot::SetNextPlotLimitsY(0, main_image->histdata_maxcount * 1.1, ImGuiCond_Always);
         if (ImPlot::BeginPlot("Pixel Histogram", "Bins", "Counts", ImVec2(-1, -1)))
         {
-            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)(main_image->histdata_max - main_image->histdata_min)) / main_image->histdata_len, (double) main_image->histdata_min);
+            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)(main_image->histdata_max - main_image->histdata_min)) / main_image->histdata_len, (double) main_image->histdata_min, 0, sizeof(float));
             ImPlot::EndPlot();
         }
         ImGui::End();
