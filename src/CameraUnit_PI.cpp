@@ -157,8 +157,8 @@ CImageData CCameraUnit_PI::CaptureImage(long int& retryCount)
 		pl_exp_uninit_seq();
       // // printf("Finished exposure\n");
 
-      int imageWidth = imageRight_ - imageLeft_ + 1;
-      int imageHeight = imageTop_ - imageBottom_ + 1;
+      int imageWidth = (imageRight_ - imageLeft_ + 1) / binningX_;
+      int imageHeight = (imageTop_ - imageBottom_ + 1) / binningY_;
 
 		retVal = CImageData(imageWidth, imageHeight);
       // printf("Got CImageData: ");

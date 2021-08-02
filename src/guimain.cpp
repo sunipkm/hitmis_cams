@@ -554,10 +554,10 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
                 ConvertRawToJpeg(inout->raw, inout->jpg, inout->min, inout->max);
             else
             {
-                uint16_t min = inout->raw->data_min - 50;
+                int min = inout->raw->data_min - 50;
                 if (min < 0)
                     min = 0;
-                uint16_t max = inout->raw->data_max + 50;
+                int max = inout->raw->data_max + 50;
                 if (max > 0xffff)
                     max = 0xffff;
                 ConvertRawToJpeg(inout->raw, inout->jpg, min, max);
@@ -1311,8 +1311,19 @@ void MainWindow()
         bin_roi[5] = (cam->GetROI())->y_max;
         RoiUpdated = false;
     }
-    if (ImGui::InputInt2("Binning", bin_roi, ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputInt("Binning", bin_roi, 1, 2, ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (bin_roi[0] > 64)
+            bin_roi[0] = 64;
+        if (bin_roi[0] < 1)
+            bin_roi[0] = 1;
+        int tmp = 1;
+        while(tmp < bin_roi[0])
+            tmp *= 2;
+        bin_roi[0] = tmp;
+        bin_roi[1] = tmp;
         RoiUpdate = true;
+    }
     if (ImGui::InputInt2("X Bounds", &(bin_roi[2]), ImGuiInputTextFlags_EnterReturnsTrue))
         RoiUpdate = true;
     if (ImGui::InputInt2("Y Bounds", &(bin_roi[4]), ImGuiInputTextFlags_EnterReturnsTrue))

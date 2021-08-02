@@ -324,7 +324,7 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
     { // allocate the buffer
         printf("Size = %d x %d\n", width_, height_);
         printf("CCD Size = %d x %d\n", CCDWidth_, CCDHeight_);
-        CImageData buffer(width_, height_);
+        CImageData buffer(width_ / binningX_, height_ / binningY_);
 
         bool done = false;
         while (!done)
@@ -339,7 +339,7 @@ CImageData CCameraUnit_ANDORUSB::CaptureImage(long int &retryCount)
                 goto exit_;
             }
 
-            unsigned int status = GetAcquiredData16(buffer.GetImageData(), width_ * height_);
+            unsigned int status = GetAcquiredData16(buffer.GetImageData(), width_ / binningX_ * height_ / binningY_);
             switch (status)
             {
             default:
