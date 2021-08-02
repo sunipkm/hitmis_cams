@@ -96,6 +96,8 @@ typedef struct
 
     float *histdata;
     int histdata_len;
+    int histdata_min;
+    int histdata_max;
     float *xdata;   // average of all Y points
     float *xpoints; // x axis
     int xdata_len;
@@ -131,6 +133,8 @@ typedef struct
         xdata_len = 0;
         ydata_len = 0;
         histdata_len = 0;
+        histdata_min = 0;
+        histdata_max = 0;
     };
 
     void Reset()
@@ -242,9 +246,6 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             main_image->ydata = new float[height];
             main_image->ypoints = new float[height];
             main_image->ydata_len = height;
-            main_image->histdata = new float[101];
-            main_image->histdata_len = 101;
-            memset(main_image->histdata, 0x0, main_image->histdata_len * sizeof(float));
             memset(main_image->ydata, 0x0, height * sizeof(float));
             main_image->data_min = 0xffff; // max
             main_image->data_max = 0x0;    // min
@@ -271,9 +272,9 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
                 // cross-histogram
                 (main_image->xdata)[i % width] += imgptr[i];
                 (main_image->ydata)[i / width] += imgptr[i];
-                // full histogram
-                int hidx = (((float)imgptr[i]) / 0xffff) * (main_image->histdata_len - 1);
-                (main_image->histdata)[hidx]++;
+                // // full histogram
+                // int hidx = (((float)imgptr[i]) / 0xffff) * (main_image->histdata_len - 1);
+                // (main_image->histdata)[hidx]++;
             }
             // histogram normalization
             for (int i = 0; i < width; i++)
@@ -285,6 +286,34 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             {
                 (main_image->ydata)[i] /= width;
                 (main_image->ypoints)[i] = i;
+            }
+            // full histogram
+            {
+                int min_bin = main_image->data_min, _min_bin;
+                int max_bin = main_image->data_max, _max_bin;
+                int bin_width = 0;
+                int num_bins = 0;
+                int hist_range = 0;
+                do
+                {
+                    bin_width += 10;
+                    _min_bin = (min_bin / bin_width) * bin_width;
+                    _max_bin = (max_bin / bin_width + 1) * bin_width;
+                    num_bins = (_max_bin - _min_bin) / bin_width;
+                } while (num_bins > 100);
+                min_bin = _min_bin;
+                max_bin = _max_bin;
+                main_image->histdata = new float[num_bins];
+                main_image->histdata_len = num_bins;
+                memset(main_image->histdata, 0x0, main_image->histdata_len * sizeof(float));
+                hist_range = max_bin - min_bin;
+                main_image->histdata_min = min_bin;
+                main_image->histdata_max = max_bin;
+                for (int i = 0; i < main_image->size; i++)
+                {
+                    int hidx = (((float)imgptr[i] - main_image->data_min) / hist_range) * (main_image->histdata_len - 1);
+                    (main_image->histdata)[hidx]++;
+                }
             }
             main_image->data_average /= main_image->size;
             main_image->data_avail = true;
@@ -1467,7 +1496,7 @@ void ImageWindow(bool *active)
         ImGui::Text("Min: %u, Max: %u, Average: %lf", main_image->data_min, main_image->data_max, main_image->data_average);
         if (ImPlot::BeginPlot("Pixel Histogram", "Bins", "Counts", ImVec2(-1, -1)))
         {
-            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)0xffff) / main_image->histdata_len);
+            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)(main_image->histdata_max - main_image->histdata_min)) / main_image->histdata_len, (double) main_image->histdata_min);
             ImPlot::EndPlot();
         }
         ImGui::End();
