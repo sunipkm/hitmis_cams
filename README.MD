@@ -11,6 +11,7 @@ The software is written for Windows NT, and must be compiled using Microsoft Vis
 2. DirectX SDK (June 2010) 
 
 ### To Build
+0. Add the location of `rc.exe` to path in order to compile the icon resources (`C:/Program Files/Windows Kits/10/bin/10.0.19041.0/x86/` or similars).
 1. Open `cmd`, and execute `vcvarsall.bat x86` (given MSVC is in your path) to load compiler variables.
 2. `cd` to the repository.
 3. Execute `build_dx9.bat`, this will build the executable under the `build` directory.
@@ -18,7 +19,7 @@ The software is written for Windows NT, and must be compiled using Microsoft Vis
 ### To Run
 1. Copy over all files under `runtime` directory to `build`, or any directory where you put the executable.
 2. Connect one of the cameras. If both cameras are connected, PI Pixis will have the priority.
-3. Double click the executable file to run the software.
+3. Double click the executable file (`hitmis.exe`) to run the software.
 
 ### Utility
 The software provides easy control for cooler temperature, exposure time, continuous exposure, automatic exposure control, region of interest selection, binning, and capture of images as compressed FITS files. It also provides basic statistical analysis on the captured data, such as cross-section or histogram.

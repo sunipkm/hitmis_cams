@@ -1,7 +1,7 @@
 // Dear ImGui: standalone example application for DirectX 9
 // If you are new to Dear ImGui, read documentation from the docs/ folder + read the top of imgui.cpp.
 // Read online: https://github.com/ocornut/imgui/tree/master/docs
-#define ANDOR
+#define HITMIS_APP_VER "1.2.1"
 #include "imgui/imgui.h"
 #include "backend/imgui_impl_dx9.h"
 #include "backend/imgui_impl_win32.h"
@@ -437,13 +437,16 @@ void SaveFits(char *filePrefix, char *DirPrefix, int i, int n, raw_image *image)
     if ((DirPrefix == NULL) || (strlen(DirPrefix) == 0))
         DirPrefix = defaultFilePrefix;
     char fileName[256];
-    _snprintf(fileName, sizeof(fileName), "%s\\%s_%ums_%d_%d_%llu.fit[compress]", DirPrefix, filePrefix, image->exposure_ms, i, n, image->tstamp);
+    if (_snprintf(fileName, sizeof(fileName), "%s\\%s_%ums_%d_%d_%llu.fit", DirPrefix, filePrefix, image->exposure_ms, i, n, image->tstamp) > sizeof(fileName))
+        goto print_err;
     fitsfile *fptr;
     int status = 0, bitpix = USHORT_IMG, naxis = 2;
     int bzero = 32768, bscale = 1;
     long naxes[2] = {(long)(image->width), (long)(image->height)};
     unlink(fileName);
-    if (!fits_create_file(&fptr, fileName, &status))
+    char *fileName_s = new char[strlen(fileName) + 16];
+    _snprintf(fileName_s, strlen(fileName) + 16, "%s[compress]", fileName);
+    if (!fits_create_file(&fptr, fileName_s, &status))
     {
         fits_create_img(fptr, bitpix, naxis, naxes, &status);
         fits_write_key(fptr, TSTRING, "PROGRAM", (void *)"hitmis_explorer", NULL, &status);
@@ -464,8 +467,11 @@ void SaveFits(char *filePrefix, char *DirPrefix, int i, int n, raw_image *image)
         fits_write_pix(fptr, TUSHORT, fpixel, (image->width) * (image->height), image->data, &status);
         fits_close_file(fptr, &status);
         _snprintf(SaveFitsStatus, sizeof(SaveFitsStatus), "saved %d of %d", i, n);
+        delete[] fileName_s;
+        return;
     }
-    else
+    delete[] fileName_s;
+print_err:
     {
         _snprintf(SaveFitsStatus, sizeof(SaveFitsStatus), "failed %d of %d", i, n);
     }
@@ -1375,7 +1381,7 @@ void MainWindow()
     if (!SaveExposureFiles)
     {
         ImGui::PushStyleColor(0, ImVec4(0.5, 0.5, 0.5, 1));
-        ImGui::Button("Start Exposure", ImVec2(100, 0));
+        ImGui::Button("Start Exposure", ImVec2(130, 0));
     }
     else if (!SaveImageCommand)
     {
