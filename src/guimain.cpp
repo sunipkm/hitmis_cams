@@ -1,7 +1,7 @@
 // Dear ImGui: standalone example application for DirectX 9
 // If you are new to Dear ImGui, read documentation from the docs/ folder + read the top of imgui.cpp.
 // Read online: https://github.com/ocornut/imgui/tree/master/docs
-#define HITMIS_APP_VER "1.2.1"
+#define HITMIS_APP_VER "1.9"
 #include "imgui/imgui.h"
 #include "backend/imgui_impl_dx9.h"
 #include "backend/imgui_impl_win32.h"
@@ -20,6 +20,7 @@
 #include "jpge.h"
 #include "fitsio.h"
 #include <chrono>
+#include "ImGuiFileDialog.h"
 
 #include <D3dx9tex.h>
 #pragma comment(lib, "D3dx9")
@@ -204,7 +205,7 @@ bool SaveImageCommand = false;
 int SaveImageNum = 0;
 int CurrentSaveImageNum = 0;
 char SaveImagePrefix[20] = "hitmis";
-char SaveImageDir[100] = ".\\fits\\";
+char SaveImageDir[255] = ".\\fits\\";
 
 DWORD WINAPI ImageGenFunction(LPVOID _img)
 {
@@ -1099,18 +1100,18 @@ void MainWindow()
     static int old_height = 0, old_width = 0, DisplaySizeInTitle = 0;
     // begin ImGui window
     if (DisplaySizeInTitle == 0)
-        ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+        ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking); // Control Panel Window
     else if (DisplaySizeInTitle > 0)
     {
         DisplaySizeInTitle--;
         char MainWindowName[50];
         _snprintf(MainWindowName, sizeof(MainWindowName), "Control Panel | Window Size %d x %d", width, height);
-        ImGui::Begin(MainWindowName, NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+        ImGui::Begin(MainWindowName, NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking); // Control Panel Window
     }
     else
     {
         DisplaySizeInTitle = 0;
-        ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize); // Control Panel Window
+        ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking); // Control Panel Window
     }
     // set ImGui window position
     if (height != old_height || width != old_width)
@@ -1252,10 +1253,7 @@ void MainWindow()
     ImGui::Columns(1);
     ImGui::Separator();
     ImGui::Columns(2, "AutoExposureControl", true);
-    if (ImGui::Checkbox("Enable Auto Exposure", &EnableAutoExposure))
-    {
-        // TODO: Sanity check
-    }
+    ImGui::Checkbox("Enable Auto Exposure", &EnableAutoExposure);
     if (!EnableAutoExposure)
         FindExposureMedian = false;
     ImGui::NextColumn();
@@ -1338,7 +1336,22 @@ void MainWindow()
     ImGui::Separator();
     // Begin Exposure Save Setup
     ImGui::InputText("Prefix", SaveImagePrefix, IM_ARRAYSIZE(SaveImagePrefix), (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
-    ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
+    ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, ImGuiInputTextFlags_ReadOnly);
+    ImGui::SameLine();
+    if (ImGui::Button("Select"))
+    {
+        ImGuiFileDialog::Instance()->OpenDialog("ChooseDirDlgKey", "Choose Destination Directory", nullptr, ".");
+    }
+    if (ImGuiFileDialog::Instance()->Display("ChooseDirDlgKey"))
+    {
+        if (ImGuiFileDialog::Instance()->IsOk())
+        {
+            std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
+            _snprintf(SaveImageDir, sizeof(SaveImageDir), "%s", filePath.c_str());
+        }
+        ImGuiFileDialog::Instance()->Close();
+    }
+    // ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
     static int LoadingScreen = 0;
     if (SaveExposureFiles && SaveImageCommand)
     {
@@ -1430,7 +1443,7 @@ void MainWindow()
 
 void ImageWindow(bool *active)
 {
-    ImGui::Begin("Image Window", active);
+    ImGui::Begin("Image Window", active, ImGuiWindowFlags_NoDocking);
     static int old_win_width = 0;
     int win_width = ImGui::GetWindowSize().x;
     int win_height = ImGui::GetWindowSize().y;
@@ -1519,7 +1532,7 @@ void ImageWindow(bool *active)
     ImGui::Separator();
     if (ShowHistogram)
     {
-        ImGui::Begin("Histogram Window", &ShowHistogram);
+        ImGui::Begin("Histogram Window", &ShowHistogram, ImGuiWindowFlags_NoDocking);
         ImGui::Text("Min: %u, Max: %u, Average: %lf", main_image->data_min, main_image->data_max, main_image->data_average);
         ImPlot::SetNextPlotLimitsX(main_image->histdata_min, main_image->histdata_max, ImGuiCond_Always);
         ImPlot::SetNextPlotLimitsY(0, main_image->histdata_maxcount * 1.1, ImGuiCond_Always);
