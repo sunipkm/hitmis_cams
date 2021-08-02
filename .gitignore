@@ -4,3 +4,5 @@
 **/imgui.ini
 **/build
 **/imgui/win32_lib
+**/*.res
+**/RC*

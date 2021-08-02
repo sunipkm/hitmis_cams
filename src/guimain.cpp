@@ -24,6 +24,8 @@
 #include <D3dx9tex.h>
 #pragma comment(lib, "D3dx9")
 
+#include "resource.h"
+
 // Data
 static LPDIRECT3D9 g_pD3D = NULL;
 static LPDIRECT3DDEVICE9 g_pd3dDevice = NULL;
@@ -810,12 +812,15 @@ void MainWindow();
 void ImageWindow(bool *active);
 
 // Main code
-int main(int, char **)
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+                     _In_opt_ HINSTANCE hPrevInstance,
+                     _In_ LPWSTR    lpCmdLine,
+                     _In_ int       nCmdShow)
 {
     // goto end2;
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
-    WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), NULL};
+    WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, hInstance, LoadIcon(hInstance, MAKEINTRESOURCE(IDI_HITMIS_CAM)), NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SMALL))};
     ::RegisterClassEx(&wc);
     hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 470, NULL, NULL, wc.hInstance, NULL);
 
