@@ -947,7 +947,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 width = rect.right - rect.left;
                 height = rect.bottom - rect.top;
             }
-            ImGui::Begin("Camera Initialization Status");
+            ImGui::Begin("Camera Initialization Status", NULL, ImGuiWindowFlags_NoCollapse);
             ImGui::SetWindowSize(ImVec2(width, height), ImGuiCond_Always);
             ImGui::SetWindowPos(ImVec2(rect.left, rect.top), ImGuiCond_Always);
             bool buttonReady = false;
