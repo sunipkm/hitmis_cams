@@ -294,10 +294,11 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
 
             if (TakeSingleShot)
                 TakeSingleShot = false;
+            CapturingImage = false;
             if (exposure_mode || (SaveImageCommand && (CurrentSaveImageNum < SaveImageNum)))
             {
                 unsigned int _Cadence = Cadence - 40, sleepAmt = 0;
-                while (sleepAmt < _Cadence)
+                while ((sleepAmt < _Cadence) && exposure_mode)
                 {
                     if (CadenceChange)
                     {
@@ -312,7 +313,6 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             }
         }
     wait:
-        CapturingImage = false;
         Sleep(40); // error case or single shot case
     }
     if (img->size)
@@ -499,6 +499,7 @@ bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
 
 // Image Display InOut Struct
 JpegLoaderInOut jpeg_inout[1];
+bool AutoContrastEn = true;
 
 DWORD WINAPI ImageConvertFunction(LPVOID _in)
 {
@@ -513,7 +514,20 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
         if (inout->raw->new_data) // new data available, make jpeg
         {
             inout->raw->new_data = false;
-            ConvertRawToJpeg(inout->raw, inout->jpg, inout->min, inout->max);
+            if (!AutoContrastEn)
+                ConvertRawToJpeg(inout->raw, inout->jpg, inout->min, inout->max);
+            else
+            {
+                uint16_t min = inout->raw->data_min - 50;
+                if (min < 0)
+                    min = 0;
+                uint16_t max = inout->raw->data_max + 50;
+                if (max > 0xffff)
+                    max = 0xffff;
+                ConvertRawToJpeg(inout->raw, inout->jpg, min, max);
+                inout->min = min;
+                inout->max = max;
+            }
             if (SaveImageCommand)
             {
                 if (CurrentSaveImageNum < SaveImageNum)
@@ -1100,11 +1114,20 @@ void MainWindow()
     {
         CCDExposure = cam->GetExposure();
     }
-    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    // if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    // {
+    //     if (!CapturingImage)
+    //         cam->SetExposure(CCDExposure);
+    //     CCDExposure = cam->GetExposure();
+    // }
+    ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!CapturingImage && !EnableAutoExposure)
     {
-        if (!CapturingImage)
+        if (cam->GetExposure() != CCDExposure)
+        {
             cam->SetExposure(CCDExposure);
-        CCDExposure = cam->GetExposure();
+            CCDExposure = cam->GetExposure();
+        }
     }
     ImGui::Separator();
     static bool single_shot = false;
@@ -1140,19 +1163,46 @@ void MainWindow()
     }
     ImGui::NextColumn();
 
-    if (!single_shot)
-        ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
-    else if (!TakeSingleShot)
-        ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
-    else
-        ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
-    if (!TakeSingleShot)
+    // if (!single_shot)
+    //     ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
+    // else if (!TakeSingleShot)
+    //     ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+    // else
+    //     ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+    // if (!TakeSingleShot)
+    // {
+    //     if (ImGui::Button("Capture", ImVec2(100, 0)) && (!CapturingImage))
+    //         TakeSingleShot = true;
+    // }
+    // else if ((single_shot && TakeSingleShot))
+    //     ImGui::Button("In Progress", ImVec2(100, 0));
+    if (exposure_mode) // continuous
     {
-        if (ImGui::Button("Capture", ImVec2(100, 0)) && (!CapturingImage))
-            TakeSingleShot = true;
+        if (CapturingImage)
+        {
+            ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+            ImGui::Button("In Progress", ImVec2(100, 0));
+        }
+        else
+        {
+            ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
+            ImGui::Button("Capture", ImVec2(100, 0));
+        }
     }
-    else if (single_shot && TakeSingleShot)
-        ImGui::Button("In Progress", ImVec2(100, 0));
+    else if (single_shot)
+    {
+        if (!TakeSingleShot)
+        {
+            ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+            if (ImGui::Button("Capture", ImVec2(100, 0)) && (!CapturingImage))
+                TakeSingleShot = true;
+        }
+        else
+        {
+            ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+            ImGui::Button("In Progress", ImVec2(100, 0));
+        }
+    }
     ImGui::PopStyleColor();
     ImGui::Columns(1);
     ImGui::Separator();
@@ -1222,11 +1272,11 @@ void MainWindow()
         bin_roi[5] = (cam->GetROI())->y_max;
         RoiUpdated = false;
     }
-    if (ImGui::InputInt2("Binning", bin_roi, CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputInt2("Binning", bin_roi, ImGuiInputTextFlags_EnterReturnsTrue))
         RoiUpdate = true;
-    if (ImGui::InputInt2("X Bounds", &(bin_roi[2]), CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputInt2("X Bounds", &(bin_roi[2]), ImGuiInputTextFlags_EnterReturnsTrue))
         RoiUpdate = true;
-    if (ImGui::InputInt2("Y Bounds", &(bin_roi[4]), CapturingImage ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputInt2("Y Bounds", &(bin_roi[4]), ImGuiInputTextFlags_EnterReturnsTrue))
         RoiUpdate = true;
     // End ROI Setup
     ImGui::Separator();
@@ -1372,10 +1422,11 @@ void ImageWindow(bool *active)
     }
     static bool ShowHistogram = false;
     ImGui::Separator();
+    ImGui::Checkbox("Auto Contrast", &AutoContrastEn);
     ImGui::Columns(2, "ImageSystemColums", true);
     // Minima and Maxima selector
     ImGui::PushItemWidth(100);
-    if (ImGui::InputInt("Pixel Min", &(jpeg_inout->min), 1, 100, ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputInt("Pixel Min", &(jpeg_inout->min), 1, 100, AutoContrastEn ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         if (jpeg_inout->min > 0xffff)
             jpeg_inout->min = jpeg_inout->max - 100;
@@ -1386,7 +1437,7 @@ void ImageWindow(bool *active)
     ImGui::PopItemWidth();
     ImGui::NextColumn();
     ImGui::PushItemWidth(100);
-    if (ImGui::InputInt("Pixel Max", &(jpeg_inout->max), 1, 100, ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
+    if (ImGui::InputInt("Pixel Max", &(jpeg_inout->max), 1, 100, AutoContrastEn ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         if (jpeg_inout->max < 0)
             jpeg_inout->max = 0;
