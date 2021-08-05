@@ -33,6 +33,12 @@ class CCameraUnit_PI: public CCameraUnit
    int imageRight_;
    int imageTop_;
    int imageBottom_;
+
+   int roiLeft;
+   int roiRight;
+   int roiTop;
+   int roiBottom;
+
    bool roi_updated_;
 
    int CCDWidth_;

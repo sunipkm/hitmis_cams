@@ -22,6 +22,10 @@ CCameraUnit_PI::CCameraUnit_PI()
 , imageRight_(0)
 , imageTop_(0)
 , imageBottom_(0)
+, roiLeft(0)
+, roiRight(0)
+, roiBottom(0)
+, roiTop(0)
 , exposure_(0)
 , lastError_(0)
 , m_initializationOK(false)
@@ -232,9 +236,9 @@ void CCameraUnit_PI::SetBinningAndROI(int binX, int binY, int x_min, int x_max, 
    binningY_ = binY;
 
    imageLeft_ = x_min;
-   imageRight_ = x_max;
+   imageRight_ = x_max - 1;
    imageBottom_ = y_min;
-   imageTop_ = y_max;
+   imageTop_ = y_max - 1;
 
    if (imageRight_ > GetCCDWidth() - 1)
       imageRight_ = GetCCDWidth() - 1;
@@ -249,10 +253,23 @@ void CCameraUnit_PI::SetBinningAndROI(int binX, int binY, int x_min, int x_max, 
       imageBottom_ = 0;
    if (imageTop_ <= imageBottom_)
       imageTop_ = GetCCDHeight() - 1;
+   
+   roiLeft = imageLeft_;
+   roiRight = imageRight_ + 1;
+   roiBottom = imageBottom_;
+   roiTop = imageTop_ + 1;
    // printf("%d %d, %d %d | %d %d\n", binningX_, binningY_, imageLeft_, imageRight_, imageBottom_, imageTop_);
 }
 
-
+const ROI *CCameraUnit_PI::GetROI() const
+{
+   static ROI roi;
+   roi.x_min = roiLeft;
+   roi.x_max = roiRight;
+   roi.y_min = roiBottom;
+   roi.y_max = roiTop;
+   return &roi;
+}
 
 void CCameraUnit_PI::SetShutter()
 {
@@ -315,14 +332,4 @@ void CCameraUnit_PI::SetReadout(int ReadSpeed)
 		pl_set_param(hCam, PARAM_SPDTAB_INDEX, (void *)&maxspeed);
 	}
 
-}
-
-const ROI *CCameraUnit_PI::GetROI() const
-{
-   static ROI roi;
-   roi.x_min = imageLeft_;
-   roi.x_max = imageRight_;
-   roi.y_min = imageBottom_;
-   roi.y_max = imageTop_;
-   return &roi;
 }

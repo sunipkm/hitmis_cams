@@ -463,11 +463,15 @@ void CCameraUnit_ANDORUSB::SetBinningAndROI(int binX, int binY, int x_min, int x
 
     lock.Relock();
     width_ = x_max - x_min;
+    // make sure width_ is consistent with binning
+    width_ = (width_ / binningX_) * binningX_;
     height_ = y_max - y_min;
+    // make sure height is consistent with binning
+    height_ = (height_ / binningY_) * binningY_;
     xmin_ = x_min;
-    xmax_ = x_max;
+    xmax_ = x_min + width_;
     ymin_ = y_min;
-    ymax_ = y_max;
+    ymax_ = y_min + height_;
 
     unsigned int retVal = SetImage(binningX_,
                                    binningY_,
@@ -492,6 +496,16 @@ void CCameraUnit_ANDORUSB::SetBinningAndROI(int binX, int binY, int x_min, int x
         printf("VFlip invalid\n");
         return;
     };
+}
+
+const ROI *CCameraUnit_ANDORUSB::GetROI() const
+{
+    static ROI roi;
+    roi.x_min = xmin_;
+    roi.x_max = xmax_;
+    roi.y_min = ymin_;
+    roi.y_max = ymax_;
+    return &roi;
 }
 
 void CCameraUnit_ANDORUSB::SetShutter()
@@ -563,14 +577,4 @@ float CCameraUnit_ANDORUSB::GetExposure() const
         return 0.0;
     }
     return exposure;
-}
-
-const ROI *CCameraUnit_ANDORUSB::GetROI() const
-{
-    static ROI roi;
-    roi.x_min = xmin_;
-    roi.x_max = xmax_ - 1;
-    roi.y_min = ymin_;
-    roi.y_max = ymax_ - 1;
-    return &roi;
 }
