@@ -1,6 +1,7 @@
 // Dear ImGui: standalone example application for DirectX 9
 // If you are new to Dear ImGui, read documentation from the docs/ folder + read the top of imgui.cpp.
 // Read online: https://github.com/ocornut/imgui/tree/master/docs
+#define WIN32_LEAN_AND_MEAN
 #define HITMIS_APP_VER "1.9"
 #include "imgui/imgui.h"
 #include "backend/imgui_impl_dx9.h"
@@ -1190,7 +1191,7 @@ void MainWindow()
     ImGui::PushItemWidth(100);
     if (ImGui::InputFloat("Cadence", &LocalCadence, 0, 0, "%.3f s", exposure_mode || SaveExposureFiles ? ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
     {
-        if (LocalCadence < 0)
+        if (LocalCadence < 0.040)
             LocalCadence = 0.040; // 25 Hz
         else if (LocalCadence > 600)
             LocalCadence = 600;
