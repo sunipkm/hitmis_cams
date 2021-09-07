@@ -28,6 +28,10 @@
 
 #include "resource.h"
 
+// Defines
+#define MAX_ALLOWED_AUTO_EXPOSURE 3600.0  // seconds, 60 minutes
+#define MAX_ALLOWED_MANUAL_EXPOSURE 360.0 // seconds, 6 minutes
+
 // Data
 static LPDIRECT3D9 g_pD3D = NULL;
 static LPDIRECT3DDEVICE9 g_pd3dDevice = NULL;
@@ -230,6 +234,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
         // cam->SetReadout(1);
         if (exposure_mode || TakeSingleShot || (SaveImageCommand && (CurrentSaveImageNum < SaveImageNum)))
         {
+            uint64_t tstart = getTime();
             CapturingImage = true;
             CImageData imgdata = cam->CaptureImage(retryCount);
             // printf("Capture complete\n");
@@ -333,9 +338,10 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             if (TakeSingleShot)
                 TakeSingleShot = false;
             CapturingImage = false;
+            tstart = getTime() - tstart;
             if (exposure_mode || (SaveImageCommand && (CurrentSaveImageNum < SaveImageNum)))
             {
-                unsigned int _Cadence = Cadence - 40, sleepAmt = 0;
+                unsigned int _Cadence = Cadence - 40, sleepAmt = tstart; // Start at time taken to expose
                 while ((sleepAmt < _Cadence) && exposure_mode)
                 {
                     if (CadenceChange)
@@ -365,7 +371,7 @@ int _compare_uint16(const void *a, const void *b)
 static bool EnableAutoExposure = false;
 static bool HaveNewAutoExposure = false;
 static float AutoExposureVal = 0.001;
-static int FindExposureMode = 90 * 10;
+static float FindExposureMode = 90.0f;
 bool FindExposureMedian = false;
 static float PixelTargetValue = 40000.0;
 static float PixelTargetUncertainty = 5000.0;
@@ -396,7 +402,13 @@ void FindOptimumExposure(raw_image *image)
             direction = true;
         else
             direction = false;
-        unsigned int coord = floor((FindExposureMode * (image->size - 1) * 0.001));
+        unsigned int coord;
+        if (FindExposureMode > 99.99)
+            coord = image->size - 1;
+        else
+            coord = floor((FindExposureMode * (image->size - 1) * 0.01));
+        if (coord < 0)
+            coord = 0;
         if (direction)
             val = picdata[coord];
         else
@@ -474,9 +486,9 @@ void SaveFits(char *filePrefix, char *DirPrefix, int i, int n, raw_image *image)
     }
     delete[] fileName_s;
 print_err:
-    {
-        _snprintf(SaveFitsStatus, sizeof(SaveFitsStatus), "failed %d of %d", i, n);
-    }
+{
+    _snprintf(SaveFitsStatus, sizeof(SaveFitsStatus), "failed %d of %d", i, n);
+}
 }
 
 bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
@@ -541,9 +553,33 @@ bool ConvertRawToJpeg(raw_image *raw, jpg_img *jpg, uint16_t min, uint16_t max)
     return retval;
 }
 
+bool dirExists(const char *dirName)
+{
+    DWORD ftyp = GetFileAttributesA(dirName);
+    if (ftyp == INVALID_FILE_ATTRIBUTES)
+        return false; //something is wrong with your path!
+
+    if (ftyp & FILE_ATTRIBUTE_DIRECTORY)
+        return true; // this is a directory!
+
+    return false; // this is not a directory!
+}
+
 // Image Display InOut Struct
 JpegLoaderInOut jpeg_inout[1];
 bool AutoContrastEn = true;
+
+static bool DirPathErrorWin = false;
+static char DirPathErrorName[256] = {
+    '\0',
+};
+
+void DirCreateErrorWin(bool *active)
+{
+    ImGui::Begin("Error Creating Directory", active);
+    ImGui::Text("Error creating directory: %s", DirPathErrorName);
+    ImGui::End();
+}
 
 DWORD WINAPI ImageConvertFunction(LPVOID _in)
 {
@@ -574,10 +610,52 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
             }
             if (SaveImageCommand)
             {
+                if (!dirExists(SaveImageDir))
+                {
+                    int mkDir_ret = CreateDirectoryA(SaveImageDir, NULL);
+                    if (mkDir_ret == 0)
+                    {
+                        mkDir_ret = GetLastError();
+                        if (mkDir_ret == ERROR_ALREADY_EXISTS)
+                        {
+                            printf("Directory %s already exists\n", SaveImageDir);
+                        }
+                        else if (mkDir_ret == ERROR_PATH_NOT_FOUND)
+                        {
+                            strcpy(DirPathErrorName, SaveImageDir);
+                            DirPathErrorWin = true;
+                        }
+                    }
+                }
                 if (CurrentSaveImageNum < SaveImageNum)
                 {
                     SaveFits(SaveImagePrefix, SaveImageDir, CurrentSaveImageNum, SaveImageNum, inout->raw);
                     CurrentSaveImageNum++;
+                }
+                else if (SaveImageNum == 0 && exposure_mode) // continuous exposure mode only
+                {
+                    char SaveImageDir_[256];
+                    SYSTEMTIME currDate = {0};
+                    GetLocalTime(&currDate);
+                    snprintf(SaveImageDir_, sizeof(SaveImageDir_), "%s\\%04d%02d%02d", SaveImageDir, currDate.wYear, currDate.wMonth, currDate.wDay);
+                    if (!dirExists(SaveImageDir_))
+                    {
+                        int mkDir_ret = CreateDirectoryA(SaveImageDir_, NULL);
+                        if (mkDir_ret == 0)
+                        {
+                            mkDir_ret = GetLastError();
+                            if (mkDir_ret == ERROR_ALREADY_EXISTS)
+                            {
+                                printf("Directory %s already exists\n", SaveImageDir);
+                            }
+                            else if (mkDir_ret == ERROR_PATH_NOT_FOUND)
+                            {
+                                strcpy(DirPathErrorName, SaveImageDir);
+                                DirPathErrorWin = true;
+                            }
+                        }
+                    }
+                    SaveFits(SaveImagePrefix, SaveImageDir_, 0, 0, inout->raw);
                 }
             }
             if (EnableAutoExposure)
@@ -820,14 +898,20 @@ void MainWindow();
 void ImageWindow(bool *active);
 
 // Main code
+#ifndef DEBUG_CONSOLE
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
-                     _In_opt_ HINSTANCE hPrevInstance,
-                     _In_ LPWSTR    lpCmdLine,
-                     _In_ int       nCmdShow)
+                      _In_opt_ HINSTANCE hPrevInstance,
+                      _In_ LPWSTR lpCmdLine,
+                      _In_ int nCmdShow)
+{
+#else
+int main(int argc, char *argv[])
 {
     // goto end2;
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
+    HINSTANCE hInstance = GetModuleHandle(NULL);
+#endif
     WNDCLASSEX wc = {sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, hInstance, LoadIcon(hInstance, MAKEINTRESOURCE(IDI_HITMIS_CAM)), NULL, NULL, NULL, _T("HiT&MIS Camera Monitor"), LoadIcon(hInstance, MAKEINTRESOURCE(IDI_SMALL))};
     ::RegisterClassEx(&wc);
     hwnd = ::CreateWindow(wc.lpszClassName, _T("Camera: Searching"), WS_OVERLAPPEDWINDOW, 100, 100, 420, 470, NULL, NULL, wc.hInstance, NULL);
@@ -1030,7 +1114,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             MainWindow();
         else
             done = 1;
-
+        // Show directory error window if needed
+        if (DirPathErrorWin)
+            DirCreateErrorWin(&DirPathErrorWin);
         // Rendering
         ImGui::EndFrame();
         g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -1085,11 +1171,39 @@ end:
     return 0;
 }
 
+static bool SaveExposureFiles = false;
+static bool SaveExposureFiles_ = false;
+static bool LargeFileConfirmWindow = false;
+
+void LargeFileConfirm()
+{
+    ImGui::Begin("Alert");
+    ImGui::PushStyleColor(0, ImVec4(1, 0, 0, 1));
+    ImGui::Text("Enable save for continuous exposures? This generates a huge amount of data.");
+    ImGui::PopStyleColor();
+    if (ImGui::Button("Accept"))
+    {
+        LargeFileConfirmWindow = false;
+        SaveExposureFiles_ = true;
+        SaveExposureFiles = true;
+        SaveImageCommand = true;
+    }
+    if (ImGui::Button("Deny"))
+    {
+        LargeFileConfirmWindow = false;
+        SaveExposureFiles_ = false;
+        SaveExposureFiles = false;
+        SaveImageCommand = false;
+    }
+    ImGui::End();
+}
+
 void MainWindow()
 {
     static float CCDTempSet = -60.0f;
     static bool firstRun = true;
-    static bool SaveExposureFiles = false;
+    if (LargeFileConfirmWindow)
+        LargeFileConfirm();
     // get windows window position
     RECT rect;
     int width, height;
@@ -1167,7 +1281,11 @@ void MainWindow()
     //         cam->SetExposure(CCDExposure);
     //     CCDExposure = cam->GetExposure();
     // }
-    ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::InputDouble("Exposure", &CCDExposure, 0, 0, "%.3f s", EnableAutoExposure ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (CCDExposure > MAX_ALLOWED_MANUAL_EXPOSURE)
+            CCDExposure = MAX_ALLOWED_MANUAL_EXPOSURE;
+    }
     if (!CapturingImage && !EnableAutoExposure)
     {
         if (cam->GetExposure() != CCDExposure)
@@ -1223,33 +1341,61 @@ void MainWindow()
     // }
     // else if ((single_shot && TakeSingleShot))
     //     ImGui::Button("In Progress", ImVec2(100, 0));
-    if (exposure_mode) // continuous
+    /* OLD STYLE BUTTONS */
+    // if (exposure_mode) // continuous
+    // {
+    //     if (CapturingImage)
+    //     {
+    //         ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+    //         ImGui::Button("In Progress", ImVec2(100, 0));
+    //     }
+    //     else
+    //     {
+    //         ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
+    //         ImGui::Button("Capture", ImVec2(100, 0));
+    //     }
+    // }
+    // else if (single_shot)
+    // {
+    //     if (!TakeSingleShot)
+    //     {
+    //         ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+    //         if (ImGui::Button("Capture", ImVec2(100, 0)) && (!CapturingImage))
+    //             TakeSingleShot = true;
+    //     }
+    //     else
+    //     {
+    //         ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+    //         ImGui::Button("In Progress", ImVec2(100, 0));
+    //     }
+    // }
+    static double ExposureLength;
+    if (CapturingImage)
     {
-        if (CapturingImage)
+        ExposureLength -= 1.0f / ImGui::GetIO().Framerate; // subtract
+        if (ExposureLength < 0)
+            ExposureLength = 0;
+        ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
+        char ProgressButtonString[12];
+        snprintf(ProgressButtonString, sizeof(ProgressButtonString), "Rem: %03.1lf s", ExposureLength);
+        ImGui::Button(ProgressButtonString, ImVec2(100, 0));
+    }
+    else
+    {
+        if (single_shot)
         {
-            ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
-            ImGui::Button("In Progress", ImVec2(100, 0));
+            ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
+            if (ImGui::Button("Capture", ImVec2(100, 0)) && (!TakeSingleShot))
+                TakeSingleShot = true;
         }
         else
         {
             ImGui::PushStyleColor(0, ImVec4(0.75, 0.75, 0.75, 1));
             ImGui::Button("Capture", ImVec2(100, 0));
         }
+        ExposureLength = CCDExposure;
     }
-    else if (single_shot)
-    {
-        if (!TakeSingleShot)
-        {
-            ImGui::PushStyleColor(0, ImVec4(0, 1, 0, 1));
-            if (ImGui::Button("Capture", ImVec2(100, 0)) && (!CapturingImage))
-                TakeSingleShot = true;
-        }
-        else
-        {
-            ImGui::PushStyleColor(0, ImVec4(0, 1, 1, 1));
-            ImGui::Button("In Progress", ImVec2(100, 0));
-        }
-    }
+
     ImGui::PopStyleColor();
     ImGui::Columns(1);
     ImGui::Separator();
@@ -1260,15 +1406,15 @@ void MainWindow()
     ImGui::NextColumn();
     ImGui::Checkbox("Measure Median Pixel", &FindExposureMedian);
     ImGui::NextColumn();
-    static int PercentileTarget = FindExposureMode / 10;
+    static float PercentileTarget = FindExposureMode;
     ImGui::PushItemWidth(50);
-    if (ImGui::InputInt("Percentile Pixel", &PercentileTarget, 0, 0, EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    if (ImGui::InputFloat("Percentile Pixel", &PercentileTarget, 0, 0, "%.2f", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
     {
         if (PercentileTarget < 10)
             PercentileTarget = 10;
         if (PercentileTarget > 100)
             PercentileTarget = 100;
-        FindExposureMode = PercentileTarget * 10;
+        FindExposureMode = PercentileTarget;
     }
     ImGui::PopItemWidth();
     ImGui::NextColumn();
@@ -1277,8 +1423,8 @@ void MainWindow()
     {
         if (MaxAllowedOptimumExposure < 0.1)
             MaxAllowedOptimumExposure = 0.1;
-        if (MaxAllowedOptimumExposure > 200)
-            MaxAllowedOptimumExposure = 200;
+        if (MaxAllowedOptimumExposure > MAX_ALLOWED_AUTO_EXPOSURE)
+            MaxAllowedOptimumExposure = MAX_ALLOWED_AUTO_EXPOSURE;
     }
     ImGui::PopItemWidth();
     ImGui::NextColumn();
@@ -1323,7 +1469,7 @@ void MainWindow()
         if (bin_roi[0] < 1)
             bin_roi[0] = 1;
         int tmp = 1;
-        while(tmp < bin_roi[0])
+        while (tmp < bin_roi[0])
             tmp *= 2;
         bin_roi[0] = tmp;
         bin_roi[1] = tmp;
@@ -1354,7 +1500,7 @@ void MainWindow()
     }
     // ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
     static int LoadingScreen = 0;
-    if (SaveExposureFiles && SaveImageCommand)
+    if (SaveExposureFiles && SaveImageCommand && single_shot)
     {
         static char loadAnim[] = "\\\\\\\\\\|||||/////-----";
         ImGui::Text("%d out of %d exposures completed, running %c", CurrentSaveImageNum, SaveImageNum, loadAnim[(LoadingScreen++) % strlen(loadAnim)]);
@@ -1366,20 +1512,37 @@ void MainWindow()
             SaveFitsStatus[0] = '\0';
         }
     }
+    else if (SaveExposureFiles && SaveImageCommand && exposure_mode)
+    {
+        ImGui::Text("SaveFits: %s", SaveFitsStatus);
+    }
     else
     {
         ImGui::Text("Not storing exposures to disk.");
         ImGui::Text("");
     }
     ImGui::Columns(3, "FileSaveSystem", true);
-    ImGui::Checkbox("Save Exposures", &SaveExposureFiles);
-    if (SaveExposureFiles)
+    if (ImGui::Checkbox("Save Exposures", &SaveExposureFiles_))
     {
-        exposure_mode = false;
-        single_shot = true;
-        // Cadence = 0; // 40 ms loop
-        // CadenceChange = true;
+        if (SaveExposureFiles_ == false) // has been unset
+            SaveImageCommand = false;
+        else if (exposure_mode == true) // has been set, and continuous exposure
+        {
+            LargeFileConfirmWindow = true;
+        }
+        else // single shot mode, has no effect
+        {
+            SaveExposureFiles_ = SaveExposureFiles;
+        }
     }
+
+    // if (SaveExposureFiles)
+    // {
+    //     exposure_mode = false;
+    //     single_shot = true;
+    //     // Cadence = 0; // 40 ms loop
+    //     // CadenceChange = true;
+    // }
     ImGui::NextColumn();
     ImGui::PushItemWidth(40);
     if (ImGui::InputInt("Exposures", &SaveImageNum, 0, 0, (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue))
@@ -1539,7 +1702,7 @@ void ImageWindow(bool *active)
         ImPlot::SetNextPlotLimitsY(0, main_image->histdata_maxcount * 1.1, ImGuiCond_Always);
         if (ImPlot::BeginPlot("Pixel Histogram", "Bins", "Counts", ImVec2(-1, -1)))
         {
-            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)(main_image->histdata_max - main_image->histdata_min)) / main_image->histdata_len, (double) main_image->histdata_min, 0, sizeof(float));
+            ImPlot::PlotStairs("##Histogram", main_image->histdata, main_image->histdata_len, ((double)(main_image->histdata_max - main_image->histdata_min)) / main_image->histdata_len, (double)main_image->histdata_min, 0, sizeof(float));
             ImPlot::EndPlot();
         }
         ImGui::End();
