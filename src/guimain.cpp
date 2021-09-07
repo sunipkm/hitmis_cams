@@ -28,6 +28,25 @@
 
 #include "resource.h"
 
+/**
+ * TODO:
+ * 1. Advanced menu for auto exposure control
+ *     a) Support for numpix exclusion at the top to deal with hot pixels
+ *     b) Support for adjusting pixel leeway
+ *     c) Support for binning control
+ *     d) Support for minimum/maximum binning range
+ * 
+ * 2. Support for slower cadence for file saving with faster cadence for imaging.
+ *    This feature will limit data generation, but maintain the robustness of the
+ *    autoexposure algorithm during daytime.
+ * 
+ * 3. Support for PNG as the middleware compressed format over JPEG.
+ *    Look at https://github.com/lvandeve/lodepng
+ * 
+ * 4. Secure network-based control support.
+ * 
+ */ 
+
 // Defines
 #define MAX_ALLOWED_AUTO_EXPOSURE 3600.0  // seconds, 60 minutes
 #define MAX_ALLOWED_MANUAL_EXPOSURE 360.0 // seconds, 6 minutes

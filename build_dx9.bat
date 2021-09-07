@@ -8,4 +8,4 @@
 @set RESOURCES=hitmis.res
 mkdir %OUT_DIR%
 rc /nologo /i %RC_INCLUDE_PATH% /i .\include\ /fo %OUT_DIR%/%RESOURCES% src/hitmis_resource.rc
-cl /nologo /Zi /EHsc /O2 /MD %INCLUDES% /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS% %OUT_DIR%\%RESOURCES%
+cl /nologo /Zi /EHsc /D NDEBUG /O2 /MD %INCLUDES% /D UNICODE /D _UNICODE %SOURCES% /Fe%OUT_DIR%/%OUT_EXE%.exe /Fo%OUT_DIR%/ /link %LIBS% %OUT_DIR%\%RESOURCES%
