@@ -32,7 +32,7 @@
  * TODO:
  * 1. Advanced menu for auto exposure control
  *     a) Support for numpix exclusion at the top to deal with hot pixels
- *     b) Support for adjusting pixel leeway
+ *     b) ~~Support for adjusting pixel leeway~~
  *     c) Support for binning control
  *     d) Support for minimum/maximum binning range
  * 
@@ -45,7 +45,7 @@
  * 
  * 4. Secure network-based control support.
  * 
- */ 
+ */
 
 // Defines
 #define MAX_ALLOWED_AUTO_EXPOSURE 3600.0  // seconds, 60 minutes
@@ -395,13 +395,15 @@ bool FindExposureMedian = false;
 static float PixelTargetValue = 40000.0;
 static float PixelTargetUncertainty = 5000.0;
 static float MaxAllowedOptimumExposure = 10;
+static int NumPixExclusion = 0;
 
 void FindOptimumExposure(raw_image *image)
 {
     double result = image->exposure_ms * 0.001;
     double exposure = image->exposure_ms * 0.001;
     AutoExposureVal = exposure;
-    printf("Input: %lf s\n", exposure);
+    int bin = bin_roi[0];
+    printf("Input: %lf s, bin %d x %d\n", exposure, bin, bin);
     double val;
     uint16_t *picdata = new uint16_t[image->size];
     memcpy(picdata, image->data, image->size * sizeof(uint16_t));
@@ -426,6 +428,8 @@ void FindOptimumExposure(raw_image *image)
             coord = image->size - 1;
         else
             coord = floor((FindExposureMode * (image->size - 1) * 0.01));
+        if (image->size - 1 - coord < NumPixExclusion)
+            coord = image->size - 1 - NumPixExclusion;
         if (coord < 0)
             coord = 0;
         if (direction)
@@ -438,15 +442,14 @@ void FindOptimumExposure(raw_image *image)
         }
     }
 
+    /** If calculated median pixel is within PixelTargetValue +/- PixelTargetUncertainty, return current exposure **/
     printf("Uncertainty: %lf, Reference: %lf\n", fabs(PixelTargetValue - val), PixelTargetUncertainty);
     if (fabs(PixelTargetValue - val) < PixelTargetUncertainty)
     {
         goto ret;
     }
 
-    /** If calculated median pixel is within PixelTargetValue +/- PixelTargetUncertainty, return current exposure **/
-
-    result = ((double)PixelTargetValue) * exposure / ((double)val);
+    result = ((double)PixelTargetValue) * exposure / ((double)val); // target optimum exposure
 
     if (result > MaxAllowedOptimumExposure)
         result = MaxAllowedOptimumExposure;
@@ -457,7 +460,7 @@ ret:
     HaveNewAutoExposure = true;
 }
 
-int JpegQuality = 70;
+int JpegQuality = 100;
 
 char SaveFitsStatus[30];
 
@@ -1217,6 +1220,28 @@ void LargeFileConfirm()
     ImGui::End();
 }
 
+void advExposureWindow(bool *active)
+{
+    ImGui::Begin("Auto Exposure Fine Controls", active, ImGuiWindowFlags_Popup);
+    if (ImGui::InputInt("Hot Pixels to exclude", &NumPixExclusion, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+    {
+        if (NumPixExclusion < 0)
+            NumPixExclusion = 0;
+        if (NumPixExclusion > main_image->size / 10)
+            NumPixExclusion = main_image->size / 10;
+    }
+    ImGui::End();
+}
+
+void advCadenceWindow(bool *active)
+{
+    ImGui::Begin("Advanced Cadence Control", active);
+    ImGui::Text("Feature in development");
+    if (ImGui::Button("Close"))
+        *active = false;
+    ImGui::End();
+}
+
 void MainWindow()
 {
     static float CCDTempSet = -60.0f;
@@ -1247,6 +1272,34 @@ void MainWindow()
         DisplaySizeInTitle = 0;
         ImGui::Begin("Control Panel", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking); // Control Panel Window
     }
+
+    // Main Menu Bar
+    ImGui::BeginMainMenuBar();
+
+    static bool adv_exposure_window = false;
+    static bool adv_cadence_window = false;
+
+    if (ImGui::Button("Advanced Auto-Exposure"))
+    {
+        adv_exposure_window = !adv_exposure_window;
+    }
+    if (ImGui::Button("Advanced Cadence"))
+    {
+        adv_cadence_window = !adv_cadence_window;
+    }
+
+    if (adv_exposure_window)
+    {
+        advExposureWindow(&adv_exposure_window);
+    }
+
+    if (adv_cadence_window)
+    {
+        advCadenceWindow(&adv_cadence_window);
+    }
+
+    ImGui::EndMainMenuBar();
+
     // set ImGui window position
     if (height != old_height || width != old_width)
     {
@@ -1501,7 +1554,10 @@ void MainWindow()
     // End ROI Setup
     ImGui::Separator();
     // Begin Exposure Save Setup
-    ImGui::InputText("Prefix", SaveImagePrefix, IM_ARRAYSIZE(SaveImagePrefix), (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
+    ImGui::InputText("Prefix",
+                     SaveImagePrefix,
+                     IM_ARRAYSIZE(SaveImagePrefix),
+                     (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, ImGuiInputTextFlags_ReadOnly);
     ImGui::SameLine();
     if (ImGui::Button("Select"))
@@ -1545,13 +1601,12 @@ void MainWindow()
     {
         if (SaveExposureFiles_ == false) // has been unset
             SaveImageCommand = false;
-        else if (exposure_mode == true) // has been set, and continuous exposure
+        else // has been set
         {
-            LargeFileConfirmWindow = true;
-        }
-        else // single shot mode, has no effect
-        {
-            SaveExposureFiles_ = SaveExposureFiles;
+            SaveExposureFiles = true;
+            SaveExposureFiles_ = true;
+            if (exposure_mode)
+                LargeFileConfirmWindow = true;
         }
     }
 
