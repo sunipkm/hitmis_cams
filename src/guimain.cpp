@@ -231,6 +231,85 @@ int CurrentSaveImageNum = 0;
 char SaveImagePrefix[20] = "hitmis";
 char SaveImageDir[255] = ".\\fits\\";
 
+int _compare_uint16(const void *a, const void *b)
+{
+    return (*((unsigned short *)a) - *((unsigned short *)b));
+}
+static bool EnableAutoExposure = false;
+static bool HaveNewAutoExposure = false;
+static float AutoExposureVal = 0.001;
+static float FindExposureMode = 90.0f;
+bool FindExposureMedian = false;
+static float PixelTargetValue = 40000.0;
+static float PixelTargetUncertainty = 5000.0;
+static float MaxAllowedOptimumExposure = 10;
+static int NumPixExclusion = 0;
+
+void FindOptimumExposure(raw_image *image)
+{
+    double result = image->exposure_ms * 0.001;
+    double exposure = image->exposure_ms * 0.001;
+    AutoExposureVal = exposure;
+    int bin = bin_roi[0];
+    printf("Input: %lf s, bin %d x %d\n", exposure, bin, bin);
+    double val;
+    uint16_t *picdata = new uint16_t[image->size];
+    memcpy(picdata, image->data, image->size * sizeof(uint16_t));
+    qsort(picdata, image->size, sizeof(unsigned short), _compare_uint16);
+
+    if (FindExposureMedian)
+    {
+        if (image->size)
+            val = (picdata[image->size / 2] + picdata[image->size / 2 + 1]) * 0.5;
+        else
+            val = picdata[image->size / 2];
+    }
+    else
+    {
+        bool direction;
+        if (picdata[0] < picdata[image->size - 1])
+            direction = true;
+        else
+            direction = false;
+        unsigned int coord;
+        if (FindExposureMode > 99.99)
+            coord = image->size - 1;
+        else
+            coord = floor((FindExposureMode * (image->size - 1) * 0.01));
+        if (image->size - 1 - coord < NumPixExclusion)
+            coord = image->size - 1 - NumPixExclusion;
+        if (coord < 0)
+            coord = 0;
+        if (direction)
+            val = picdata[coord];
+        else
+        {
+            if (coord == 0)
+                coord = 1;
+            val = picdata[image->size - coord];
+        }
+    }
+
+    /** If calculated median pixel is within PixelTargetValue +/- PixelTargetUncertainty, return current exposure **/
+    printf("Uncertainty: %lf, Reference: %lf\n", fabs(PixelTargetValue - val), PixelTargetUncertainty);
+    if (fabs(PixelTargetValue - val) < PixelTargetUncertainty)
+    {
+        goto ret;
+    }
+
+    result = ((double)PixelTargetValue) * exposure / ((double)val); // target optimum exposure
+    printf("Required exposure: %lf\n", result);
+
+    if (result > MaxAllowedOptimumExposure)
+        result = MaxAllowedOptimumExposure;
+    // round to 1 ms
+    result = ((int)(result * 1000)) * 0.001;
+    AutoExposureVal = result;
+ret:
+    delete[] picdata;
+    HaveNewAutoExposure = true;
+}
+
 DWORD WINAPI ImageGenFunction(LPVOID _img)
 {
     static int height = cam->GetCCDHeight();
@@ -256,7 +335,7 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             uint64_t tstart = getTime();
             CapturingImage = true;
             CImageData imgdata = cam->CaptureImage(retryCount);
-            // printf("Capture complete\n");
+            printf("Capture complete\n");
             if (!imgdata.HasData())
                 goto wait;
             height = imgdata.GetImageHeight();
@@ -351,8 +430,24 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
             main_image->data_average /= main_image->size;
             main_image->data_avail = true;
             main_image->new_data = true;
+            if (EnableAutoExposure)
+            {
+                FindOptimumExposure(main_image);
+                if (HaveNewAutoExposure)
+                {
+                    if (AutoExposureVal < 0.001)
+                        AutoExposureVal = 0.001;
+                    if (cam->GetExposure() != AutoExposureVal)
+                    {
+                        cam->SetExposure(AutoExposureVal);
+                        AutoExposureVal = cam->GetExposure();
+                    }
+                    // }
+                    HaveNewAutoExposure = false;
+                }
+            }
             LeaveCriticalSection(main_image->lock);
-            // printf("Image conversion complete\n");
+            printf("Image conversion complete\n");
 
             if (TakeSingleShot)
                 TakeSingleShot = false;
@@ -381,83 +476,6 @@ DWORD WINAPI ImageGenFunction(LPVOID _img)
     if (img->size)
         free(img->data);
     return NULL;
-}
-
-int _compare_uint16(const void *a, const void *b)
-{
-    return (*((unsigned short *)a) - *((unsigned short *)b));
-}
-static bool EnableAutoExposure = false;
-static bool HaveNewAutoExposure = false;
-static float AutoExposureVal = 0.001;
-static float FindExposureMode = 90.0f;
-bool FindExposureMedian = false;
-static float PixelTargetValue = 40000.0;
-static float PixelTargetUncertainty = 5000.0;
-static float MaxAllowedOptimumExposure = 10;
-static int NumPixExclusion = 0;
-
-void FindOptimumExposure(raw_image *image)
-{
-    double result = image->exposure_ms * 0.001;
-    double exposure = image->exposure_ms * 0.001;
-    AutoExposureVal = exposure;
-    int bin = bin_roi[0];
-    printf("Input: %lf s, bin %d x %d\n", exposure, bin, bin);
-    double val;
-    uint16_t *picdata = new uint16_t[image->size];
-    memcpy(picdata, image->data, image->size * sizeof(uint16_t));
-    qsort(picdata, image->size, sizeof(unsigned short), _compare_uint16);
-
-    if (FindExposureMedian)
-    {
-        if (image->size)
-            val = (picdata[image->size / 2] + picdata[image->size / 2 + 1]) * 0.5;
-        else
-            val = picdata[image->size / 2];
-    }
-    else
-    {
-        bool direction;
-        if (picdata[0] < picdata[image->size - 1])
-            direction = true;
-        else
-            direction = false;
-        unsigned int coord;
-        if (FindExposureMode > 99.99)
-            coord = image->size - 1;
-        else
-            coord = floor((FindExposureMode * (image->size - 1) * 0.01));
-        if (image->size - 1 - coord < NumPixExclusion)
-            coord = image->size - 1 - NumPixExclusion;
-        if (coord < 0)
-            coord = 0;
-        if (direction)
-            val = picdata[coord];
-        else
-        {
-            if (coord == 0)
-                coord = 1;
-            val = picdata[image->size - coord];
-        }
-    }
-
-    /** If calculated median pixel is within PixelTargetValue +/- PixelTargetUncertainty, return current exposure **/
-    printf("Uncertainty: %lf, Reference: %lf\n", fabs(PixelTargetValue - val), PixelTargetUncertainty);
-    if (fabs(PixelTargetValue - val) < PixelTargetUncertainty)
-    {
-        goto ret;
-    }
-
-    result = ((double)PixelTargetValue) * exposure / ((double)val); // target optimum exposure
-
-    if (result > MaxAllowedOptimumExposure)
-        result = MaxAllowedOptimumExposure;
-    // round to 1 ms
-    result = ((int)(result * 1000)) * 0.001;
-    AutoExposureVal = result;
-ret:
-    HaveNewAutoExposure = true;
 }
 
 int JpegQuality = 100;
@@ -678,17 +696,6 @@ DWORD WINAPI ImageConvertFunction(LPVOID _in)
                         }
                     }
                     SaveFits(SaveImagePrefix, SaveImageDir_, 0, 0, inout->raw);
-                }
-            }
-            if (EnableAutoExposure)
-            {
-                FindOptimumExposure(inout->raw);
-                if (HaveNewAutoExposure)
-                {
-                    if (AutoExposureVal < 0.001)
-                        AutoExposureVal = 0.001;
-                    cam->SetExposure(AutoExposureVal);
-                    HaveNewAutoExposure = false;
                 }
             }
         }

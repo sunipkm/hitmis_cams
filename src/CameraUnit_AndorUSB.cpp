@@ -15,13 +15,22 @@ bool CCameraUnit_ANDORUSB::HasError(unsigned int error, unsigned int line) const
     {
     default:
         printf("%s, %d: ANDOR Error\n", __FILE__, line);
+        fflush(stdout);
         return true;
 
-#define ANDOR_ERROR(x)                                               \
-    case x:                                                          \
-        if (error != lastError_)                                     \
-            printf("%s, %d: ANDOR error: " #x "\n", __FILE__, line); \
-        lastError_ = error;                                          \
+// #define ANDOR_ERROR(x)                                               \
+//     case x:                                                          \
+//         if (error != lastError_)                                     \
+//         {                                                            \
+//             printf("%s, %d: ANDOR error: " #x "\n", __FILE__, line); \
+//             fflush(stdout);                                          \
+//         }                                                            \
+//         lastError_ = error;                                          \
+//         return true;
+#define ANDOR_ERROR(x)                                           \
+    case x:                                                      \
+        printf("%s, %d: ANDOR error: " #x "\n", __FILE__, line); \
+        fflush(stdout);                                          \
         return true;
 #define NOT_ANDOR_ERROR(x) \
     case x:                \
@@ -402,6 +411,8 @@ double CCameraUnit_ANDORUSB::GetTemperature() const
         return INVALID_TEMPERATURE;
     }
 
+    CriticalSection::Lock lock(criticalSection_);
+
     int temperature = 0;
     unsigned int retVal = ::GetTemperature(&temperature);
 
@@ -537,10 +548,13 @@ void CCameraUnit_ANDORUSB::SetShutterIsOpen(bool open)
 
 void CCameraUnit_ANDORUSB::SetExposure(float exposureInSeconds)
 {
+    // printf("%s called\n", __func__);
     if (!m_initializationOK)
     {
         return;
     }
+
+    // printf("%s: Received exposure request: %f\n", __func__, exposureInSeconds);
 
     if (exposureInSeconds <= 0)
     {
@@ -554,12 +568,27 @@ void CCameraUnit_ANDORUSB::SetExposure(float exposureInSeconds)
 
     exposureInSeconds = maxexposurems * 0.001; // 1 ms increments only
 
-    if (HasError(SetExposureTime(exposureInSeconds), __LINE__))
+    if (exposure_ == exposureInSeconds)
     {
+        // printf("%s: Exposure already set to %f\n", __func__, exposure_);
         return;
     }
 
+    // printf("%s: Exposure to be set: %f\n", __func__, exposureInSeconds);
+
+    CriticalSection::Lock lock(criticalSection_);
+
+    // printf("%s: Calling set exposure\n", __func__);
+
+    if (HasError(SetExposureTime(exposureInSeconds), __LINE__))
+    {
+        // printf("%s: Set exposure has error\n", __func__);
+        // fflush(stdout);
+        return;
+    }
     exposure_ = exposureInSeconds;
+    // printf("%s: Set exposure successful: %f\n", __func__, exposure_);
+    // fflush(stdout);
 }
 
 float CCameraUnit_ANDORUSB::GetExposure() const
@@ -568,6 +597,8 @@ float CCameraUnit_ANDORUSB::GetExposure() const
     {
         return 0.0;
     }
+
+    CriticalSection::Lock lock(criticalSection_);
 
     float exposure;
     float accumulate;
