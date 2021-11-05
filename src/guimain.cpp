@@ -1487,7 +1487,7 @@ void MainWindow()
     ImGui::NextColumn();
     static float PercentileTarget = FindExposureMode;
     ImGui::PushItemWidth(50);
-    if (ImGui::InputFloat("Percentile Pixel", &PercentileTarget, 0, 0, "%.2f", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    if (ImGui::InputFloat("Percentile Pixel", &PercentileTarget, 0, 0, "%.2f", ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         if (PercentileTarget < 10)
             PercentileTarget = 10;
@@ -1498,7 +1498,7 @@ void MainWindow()
     ImGui::PopItemWidth();
     ImGui::NextColumn();
     ImGui::PushItemWidth(50);
-    if (ImGui::InputFloat("Max Exposure", &MaxAllowedOptimumExposure, 0, 0, "%.1f s", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    if (ImGui::InputFloat("Max Exposure", &MaxAllowedOptimumExposure, 0, 0, "%.1f s",  ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         if (MaxAllowedOptimumExposure < 0.1)
             MaxAllowedOptimumExposure = 0.1;
@@ -1508,7 +1508,7 @@ void MainWindow()
     ImGui::PopItemWidth();
     ImGui::NextColumn();
     ImGui::PushItemWidth(50);
-    if (ImGui::InputFloat("Pixel Target", &PixelTargetValue, 0, 0, "%.0f", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    if (ImGui::InputFloat("Pixel Target", &PixelTargetValue, 0, 0, "%.0f",  ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         if (PixelTargetValue < 100)
             PixelTargetValue = 100;
@@ -1518,7 +1518,7 @@ void MainWindow()
     ImGui::PopItemWidth();
     ImGui::NextColumn();
     ImGui::PushItemWidth(50);
-    if (ImGui::InputFloat("Uncertainty", &PixelTargetUncertainty, 0, 0, "%.0f", EnableAutoExposure ? ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue : ImGuiInputTextFlags_ReadOnly))
+    if (ImGui::InputFloat("Uncertainty", &PixelTargetUncertainty, 0, 0, "%.0f",  ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         if (PixelTargetValue < 100)
             PixelTargetValue = 100;
@@ -1564,7 +1564,7 @@ void MainWindow()
     ImGui::InputText("Prefix",
                      SaveImagePrefix,
                      IM_ARRAYSIZE(SaveImagePrefix),
-                     (!SaveExposureFiles) || (SaveImageCommand) ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
+                     ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::InputText("Directory", SaveImageDir, IM_ARRAYSIZE(SaveImageDir) / 2, ImGuiInputTextFlags_ReadOnly);
     ImGui::SameLine();
     if (ImGui::Button("Select"))
